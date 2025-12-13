@@ -9,6 +9,7 @@ import configparser
 import shutil
 from datetime import datetime
 from pathlib import Path
+from flask import current_app
 import logging
 
 logger = logging.getLogger(__name__)
@@ -55,8 +56,36 @@ class DatasetBuilder:
         self.output_dir = output_dir
         self.antenna_config = antenna_config
 
+        # ========== 新增：验证天线数量 ==========
+        self._validate_antenna_config()
+
         logger.info(f"数据集构建器初始化 (仅QV频段): {raw_data_dir} -> {output_dir}")
         logger.info(f"天线配置: {antenna_config}")
+
+    def _validate_antenna_config(self):
+        """
+        验证天线配置是否在合理范围内
+
+        Raises:
+            ValueError: 如果天线数量超过系统限制
+        """
+        # 尝试从Flask应用配置中获取最大天线数
+        try:
+            max_antennas = current_app.config.get('MAX_ANTENNAS_PER_STATION', 20)
+        except RuntimeError:
+            # 如果不在Flask应用上下文中，使用默认值
+            max_antennas = 20
+
+        for station, count in self.antenna_config.items():
+            if count > max_antennas:
+                error_msg = (
+                    f"站点 {station} 的天线数量 {count} 超过系统最大限制 {max_antennas}。"
+                    f"请调整配置或联系系统管理员。"
+                )
+                logger.error(error_msg)
+                raise ValueError(error_msg)
+
+        logger.info(f"✓ 天线配置验证通过 (最大限制: {max_antennas}根/站)")
 
     def build(self):
         """

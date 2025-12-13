@@ -106,6 +106,16 @@ def run_simulation():
                 'data': None
             }), 400
 
+        # ========== 新增：天线数量上限验证 ==========
+        max_antennas = current_app.config.get('MAX_ANTENNAS_PER_STATION', 20)
+        for station, count in params['antenna_num'].items():
+            if count > max_antennas:
+                return jsonify({
+                    'code': 400,
+                    'message': f'站点 {station} 的天线数量 {count} 超过系统最大限制 {max_antennas}',
+                    'data': None
+                }), 400
+
         # 记录请求日志
         logger.info(
             f"接收到调度请求: "
@@ -162,6 +172,8 @@ def test_endpoint():
     测试接口
     用于验证API是否正常工作
     """
+    max_antennas = current_app.config.get('MAX_ANTENNAS_PER_STATION', 20)
+
     return jsonify({
         'code': 200,
         'message': '仿真API工作正常',
@@ -170,6 +182,7 @@ def test_endpoint():
             'method': 'POST',
             'status': 'available',
             'version': 'QV_ONLY_v2.0',
-            'required_params': ['arc_data', 'antenna_num', 'time_window']
+            'required_params': ['arc_data', 'antenna_num', 'time_window'],
+            'max_antennas_per_station': max_antennas
         }
     }), 200

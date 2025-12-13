@@ -1,9 +1,9 @@
 {
-  "arc_data": "access_250804",
+  "arc_data": "access_251017",
   "antenna_num": {
     "CM": 6,
-    "JMS": 14,
-    "KEL": 18,
+    "JMS": 4,
+    "KEL": 8,
     "KS": 5,
     "MH": 3,
     "TC": 10,

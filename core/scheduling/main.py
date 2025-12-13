@@ -10,7 +10,7 @@ from algorithm import (count_time_station_num, data_joint, cal_avail_dmz, save_u
                        initialize_antenna_load_tracking, set_balance_config,
                        iterative_optimization, cal_success_rate, check_crossover_overflow, answer_type_transform,
                        resorted_by_status)
-from config import (ROOT_FOLDER, OPTIMIZATION, METHOD, ANSWER_TYPE, USE_SA, SA_MAX_TIME,
+from core.scheduling.config import (ROOT_FOLDER, OPTIMIZATION, METHOD, ANSWER_TYPE, USE_SA, SA_MAX_TIME,
                     INTRA_STATION_BALANCE, ANTENNA_LOAD_METHOD, LOAD_WEIGHT_TASK, LOAD_WEIGHT_TIME)
 from validate_results import validate_allocation_results
 from simulated_annealing import optimize_with_sa

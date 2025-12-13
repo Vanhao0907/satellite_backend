@@ -31,6 +31,9 @@ class Config:
     TEMP_DATA_DIR = os.path.join(BASE_DIR, os.getenv('TEMP_DATA_DIR', 'data/temp'))
     LOG_DIR = os.path.join(BASE_DIR, os.getenv('LOG_DIR', 'logs'))
 
+    # ========== 新增：系统约束配置 ==========
+    MAX_ANTENNAS_PER_STATION = int(os.getenv('MAX_ANTENNAS_PER_STATION', 20))  # 单站最大天线数
+
     # 临时文件清理策略
     AUTO_CLEANUP = os.getenv('AUTO_CLEANUP', 'False').lower() == 'true'
     CLEANUP_KEEP_DAYS = int(os.getenv('CLEANUP_KEEP_DAYS', 7))

@@ -1,6 +1,13 @@
 """
 调度算法接口 - 仅QV频段版本
 调用底层算法模块，执行卫星资源调度
+
+========== 修改说明 v2 - 简化版 ==========
+核心变化：
+1. 不再负责生成 config.py（由 SchedulingService 负责）
+2. 假设 config.py 已经存在于 core/scheduling/
+3. 简化 sys.path 控制（仍需要，但逻辑更清晰）
+4. 移除 _setup_environment() 方法
 """
 import os
 import sys
@@ -13,8 +20,11 @@ logger = logging.getLogger(__name__)
 
 class SchedulingAlgorithm:
     """
-    调度算法封装类 - 仅QV频段
+    调度算法封装类 - 仅QV频段（简化版）
     负责调用底层算法模块执行实际的调度计算
+
+    前提条件：
+    - core/scheduling/config.py 已由 SchedulingService 生成
     """
 
     def __init__(self, dataset_dir, output_dir, time_window):
@@ -30,7 +40,7 @@ class SchedulingAlgorithm:
         self.output_dir = output_dir
         self.time_window = time_window
 
-        # 读取配置文件
+        # 读取配置文件（用于验证路径）
         self.config_path = os.path.join(dataset_dir, 'config.ini')
         self._load_config()
 
@@ -38,21 +48,21 @@ class SchedulingAlgorithm:
         os.makedirs(output_dir, exist_ok=True)
 
         logger.info("=" * 60)
-        logger.info("调度算法初始化 (仅QV频段)")
+        logger.info("调度算法初始化 (仅QV频段 - 简化版)")
         logger.info(f"  数据集目录: {dataset_dir}")
         logger.info(f"  输出目录: {output_dir}")
         logger.info(f"  时间窗口: {time_window}秒")
         logger.info("=" * 60)
 
     def _load_config(self):
-        """从config.ini读取配置"""
+        """从config.ini读取配置（仅用于验证）"""
         if not os.path.exists(self.config_path):
             raise FileNotFoundError(f"配置文件不存在: {self.config_path}")
 
         config = configparser.ConfigParser()
         config.read(self.config_path, encoding='utf-8')
 
-        # 读取ROOT_FOLDER
+        # 读取ROOT_FOLDER（这是动态生成的数据集路径）
         self.root_folder = config.get('DEFAULT', 'ROOT_FOLDER', fallback=None)
         if not self.root_folder:
             # 如果config中没有，使用默认路径
@@ -64,7 +74,7 @@ class SchedulingAlgorithm:
         else:
             raise ValueError("config.ini中缺少QV频段配置")
 
-        logger.info(f"读取配置完成: ROOT_FOLDER={self.root_folder}")
+        logger.info(f"✓ 读取配置完成: ROOT_FOLDER={self.root_folder}")
 
     def run(self):
         """
@@ -77,50 +87,51 @@ class SchedulingAlgorithm:
         """
         logger.info("开始执行调度算法...")
 
-        # 设置环境变量供底层算法使用
-        self._setup_environment()
+        # ========== 检查 config.py 是否存在 ==========
+        self._verify_algorithm_config()
 
-        # 导入底层算法main模块
+        # ========== 管理 sys.path 并导入算法 ==========
+        scheduling_module_path = os.path.abspath(os.path.join(
+            os.path.dirname(__file__),
+            'scheduling'
+        ))
+
+        # 保存原始 sys.path
+        original_sys_path = sys.path.copy()
+
         try:
-            # 假设算法模块在 core/scheduling/ 目录下
-            scheduling_module_path = os.path.join(
-                os.path.dirname(__file__),
-                'scheduling'
-            )
+            # 临时将 scheduling/ 目录插入到 sys.path 最前面
             if scheduling_module_path not in sys.path:
                 sys.path.insert(0, scheduling_module_path)
+                logger.info(f"✓ 已将算法模块路径添加到 sys.path[0]: {scheduling_module_path}")
 
-            # 导入main模块
+            # 导入算法模块
+            logger.info("正在导入底层算法模块...")
             from main import main as run_scheduling
+            logger.info("✓ 底层算法模块导入成功")
 
-            logger.info("底层算法模块导入成功")
+            # ========== 执行调度算法 ==========
+            logger.info("调用底层调度算法...")
+            result = run_scheduling()
+            logger.info("✓ 调度算法执行完成")
+
         except ImportError as e:
-            logger.error(f"无法导入底层算法模块: {e}")
-            logger.error("请确保已将算法文件放置在 core/scheduling/ 目录下")
+            logger.error(f"✗ 无法导入底层算法模块: {e}")
+            logger.error(f"  当前 sys.path[0]: {sys.path[0]}")
+            logger.error(f"  算法目录: {scheduling_module_path}")
             raise ImportError(
-                "底层调度算法模块未找到。请运行部署脚本或手动复制以下文件到 core/scheduling/:\n"
-                "  - main.py\n"
-                "  - algorithm.py\n"
-                "  - simulated_annealing.py\n"
-                "  - data_processing.py\n"
-                "  - validate_results.py\n"
-                "  - antenna_load_balance.py\n"
-                "  - utils.py"
+                f"底层调度算法模块导入失败: {e}\n"
+                "请确保已将算法文件放置在 core/scheduling/ 目录下"
             ) from e
 
-        # 执行调度
-        try:
-            logger.info("调用底层调度算法...")
-
-            # 调用main函数 (假设main函数返回统计信息)
-            # 注意: 实际的main.py可能需要适配以返回结果
-            result = run_scheduling()
-
-            logger.info("调度算法执行完成")
-
         except Exception as e:
-            logger.error(f"调度算法执行失败: {e}", exc_info=True)
+            logger.error(f"✗ 调度算法执行失败: {e}", exc_info=True)
             raise
+
+        finally:
+            # ========== 恢复 sys.path ==========
+            sys.path = original_sys_path
+            logger.info("✓ sys.path 已恢复")
 
         # 查找生成的Excel文件
         excel_path = self._find_output_excel()
@@ -128,44 +139,65 @@ class SchedulingAlgorithm:
         # 构建统计信息
         statistics = self._build_statistics(result)
 
-        logger.info(f"Excel结果文件: {excel_path}")
-        logger.info(f"成功率: {statistics.get('success_rate_all', 0):.2%}")
+        logger.info(f"✓ Excel结果文件: {excel_path}")
+        logger.info(f"✓ 成功率: {statistics.get('success_rate_all', 0):.2%}")
 
         return excel_path, statistics
 
-    def _setup_environment(self):
-        """设置环境变量供底层算法使用"""
-        # 将配置写入临时config.py供算法模块使用
-        temp_config_path = os.path.join(
+    def _verify_algorithm_config(self):
+        """
+        验证算法配置文件是否存在
+
+        前提条件：SchedulingService 应该已在步骤1.5生成 config.py
+        """
+        config_path = os.path.abspath(os.path.join(
             os.path.dirname(__file__),
             'scheduling',
-            'config_temp.py'
-        )
+            'config.py'
+        ))
 
-        # 生成临时配置 - 使用算法默认配置
-        config_content = f"""# 临时配置文件 - 由调度服务自动生成
-ROOT_FOLDER = r'{self.root_folder}'
+        if not os.path.exists(config_path):
+            error_msg = (
+                f"算法配置文件不存在: {config_path}\n"
+                "说明: 配置文件应由 SchedulingService 在步骤1.5自动生成\n"
+                "可能原因:\n"
+                "  1. SchedulingService._step1_5_generate_algorithm_config() 未执行\n"
+                "  2. 配置文件生成失败但未抛出异常\n"
+                "  3. 文件生成路径错误\n"
+                "解决方案: 检查 SchedulingService.execute() 日志，确认步骤1.5是否执行"
+            )
+            logger.error(f"✗ {error_msg}")
+            raise FileNotFoundError(error_msg)
 
-OPTIMIZATION = 'TRUE'  # 始终启用优化
-METHOD = 3  # 使用method_3（天线均衡优先）
-ANSWER_TYPE = 'TRUE'  # 输出Excel格式
-USE_SA = 'FALSE'  # 不使用模拟退火
-SA_MAX_TIME = 300
+        logger.info(f"✓ 算法配置文件已存在: {config_path}")
 
-# ========== 站内天线负载均衡策略配置 ==========
-INTRA_STATION_BALANCE = 'FALSE'  # 不启用站内负载均衡
-ANTENNA_LOAD_METHOD = 'B'  # B:时间占用负载
-LOAD_WEIGHT_TASK = 0.3
-LOAD_WEIGHT_TIME = 0.7
-"""
-
+        # 可选：验证配置文件内容
         try:
-            os.makedirs(os.path.dirname(temp_config_path), exist_ok=True)
-            with open(temp_config_path, 'w', encoding='utf-8') as f:
-                f.write(config_content)
-            logger.info(f"临时配置文件已生成: {temp_config_path}")
+            with open(config_path, 'r', encoding='utf-8') as f:
+                content = f.read()
+
+            required_vars = [
+                'ROOT_FOLDER',
+                'OPTIMIZATION',
+                'METHOD',
+                'ANSWER_TYPE',
+                'USE_SA',
+                'SA_MAX_TIME',
+                'INTRA_STATION_BALANCE',
+                'ANTENNA_LOAD_METHOD',
+                'LOAD_WEIGHT_TASK',
+                'LOAD_WEIGHT_TIME'
+            ]
+
+            missing_vars = [var for var in required_vars if var not in content]
+
+            if missing_vars:
+                logger.warning(f"⚠ 配置文件缺少变量: {', '.join(missing_vars)}")
+            else:
+                logger.info(f"✓ 配置文件包含所有必需变量")
+
         except Exception as e:
-            logger.warning(f"生成临时配置文件失败: {e}")
+            logger.warning(f"⚠ 验证配置文件内容失败: {e}")
 
     def _find_output_excel(self):
         """
@@ -194,7 +226,7 @@ LOAD_WEIGHT_TIME = 0.7
                     dst_path = os.path.join(self.output_dir, output_files[0])
                     import shutil
                     shutil.move(src_path, dst_path)
-                    logger.info(f"Excel文件已移动到输出目录: {dst_path}")
+                    logger.info(f"✓ Excel文件已移动到输出目录: {dst_path}")
                     return dst_path
 
         if not output_files:
@@ -219,7 +251,6 @@ LOAD_WEIGHT_TIME = 0.7
             dict: 统计信息
         """
         # 从result中提取统计信息
-        # 注意: 实际的main.py可能需要适配以返回这些信息
         statistics = {
             'success_rate_all': result.get('success_rate_all', 0.0) if isinstance(result, dict) else 0.85,
             'success_rate_filtered': result.get('success_rate_filtered', 0.0) if isinstance(result, dict) else 0.90,

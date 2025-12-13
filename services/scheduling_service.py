@@ -1,6 +1,13 @@
 """
 卫星资源调度服务 - 仅QV频段版本
 串联所有处理步骤：数据集构建 → 调度算法 → 结果合并 → 可视化
+
+========== 修改说明 v3 - 修复路径问题 ==========
+核心修复：
+1. 使用 os.getcwd() 获取项目根目录（更可靠）
+2. 添加详细的调试日志
+3. 添加异常处理和错误提示
+4. 验证配置文件是否成功生成
 """
 import os
 import shutil
@@ -32,7 +39,7 @@ class SchedulingService:
             params: dict {
                 "arc_data": str,        # 数据集名称
                 "antenna_num": dict,    # QV天线配置 (单层结构)
-                "time_window": int      # 时间窗口
+                "time_window": int      # 时间窗口（秒）
             }
         """
         self.params = params
@@ -92,7 +99,10 @@ class SchedulingService:
             # 步骤1: 构建数据集
             dataset_path = self._step1_build_dataset()
 
-            # 步骤2: 执行调度算法
+            # ========== 核心修改：步骤1.5 生成算法配置文件 ==========
+            self._step1_5_generate_algorithm_config(dataset_path)
+
+            # 步骤2: 执行调度算法（简化版）
             excel_path, statistics = self._step2_run_scheduling(dataset_path)
 
             # 步骤3: 合并结果
@@ -159,9 +169,127 @@ class SchedulingService:
         logger.info(f"[{self.task_id}] 数据集构建完成: {dataset_path}")
         return dataset_path
 
+    def _step1_5_generate_algorithm_config(self, dataset_path):
+        """
+        ========== 核心修改：步骤1.5 生成算法配置文件 ==========
+
+        直接在 core/scheduling/ 目录生成 config.py
+        将前端参数映射为算法需要的配置常量
+
+        Args:
+            dataset_path: 数据集路径（从步骤1获得）
+        """
+        logger.info(f"[{self.task_id}] 【步骤1.5/5】生成算法配置文件...")
+
+        try:
+            # ========== 修复：使用当前工作目录（最可靠）==========
+            project_root = os.getcwd()
+            config_dir = os.path.join(project_root, 'core', 'scheduling')
+            config_path = os.path.join(config_dir, 'config.py')
+
+            logger.info(f"[{self.task_id}]   项目根目录: {project_root}")
+            logger.info(f"[{self.task_id}]   目标配置目录: {config_dir}")
+            logger.info(f"[{self.task_id}]   目标配置文件: {config_path}")
+
+            # 确保目录存在
+            if not os.path.exists(config_dir):
+                logger.info(f"[{self.task_id}]   创建配置目录...")
+                os.makedirs(config_dir, exist_ok=True)
+                logger.info(f"[{self.task_id}]   ✓ 配置目录已创建")
+            else:
+                logger.info(f"[{self.task_id}]   ✓ 配置目录已存在")
+
+            # ========== 参数映射 ==========
+            # 1. ROOT_FOLDER: 从数据集路径获取
+            root_folder = os.path.join(dataset_path, 'QV')
+            logger.info(f"[{self.task_id}]   ROOT_FOLDER = {root_folder}")
+
+            # 2. SA_MAX_TIME: 从前端 time_window 参数获取
+            sa_max_time = self.params['time_window']
+            logger.info(f"[{self.task_id}]   SA_MAX_TIME = {sa_max_time} (来自 time_window)")
+
+            # 3. 其他参数：使用默认值
+            optimization = 'TRUE'
+            method = 3
+            answer_type = 'TRUE'
+            use_sa = 'FALSE'
+            intra_station_balance = 'FALSE'
+            antenna_load_method = 'B'
+            load_weight_task = 0.3
+            load_weight_time = 0.7
+
+            # ========== 生成配置内容 ==========
+            config_content = f"""# 算法配置文件 - 自动生成
+# 任务ID: {self.task_id}
+# 生成时间: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
+# 来源: API参数 → 配置映射
+
+# ========== 数据集路径（动态生成）==========
+ROOT_FOLDER = r'{root_folder}'
+# 说明: 来自数据集构建步骤，指向 {dataset_path}/QV
+
+# ========== 调度算法基础配置 ==========
+OPTIMIZATION = '{optimization}'  # 是否启用优化
+METHOD = {method}  # 调度方法: 1=时间窗口优先, 2=天线可用率优先, 3=天线均衡优先(推荐)
+ANSWER_TYPE = '{answer_type}'  # 是否输出Excel格式结果
+USE_SA = '{use_sa}'  # 是否使用模拟退火优化
+SA_MAX_TIME = {sa_max_time}  # 模拟退火最大时间(秒) - 来自前端 time_window 参数
+
+# ========== 站内天线负载均衡策略配置 ==========
+INTRA_STATION_BALANCE = '{intra_station_balance}'  # 是否启用站内天线负载均衡
+ANTENNA_LOAD_METHOD = '{antenna_load_method}'  # 负载计算方法: A=任务数量, B=时间占用, C=综合负载
+LOAD_WEIGHT_TASK = {load_weight_task}  # 任务数量权重 (仅method=C时使用)
+LOAD_WEIGHT_TIME = {load_weight_time}  # 时间占用权重 (仅method=C时使用)
+
+# ========== 配置说明 ==========
+# 本文件由调度服务自动生成，供底层算法模块使用
+# 修改此文件不会影响下次调度，因为每次都会重新生成
+# 如需修改默认配置，请修改 services/scheduling_service.py 中的默认值
+"""
+
+            # ========== 写入文件 ==========
+            logger.info(f"[{self.task_id}]   正在写入配置文件...")
+
+            with open(config_path, 'w', encoding='utf-8') as f:
+                f.write(config_content)
+
+            logger.info(f"[{self.task_id}]   ✓ 文件写入完成")
+
+            # ========== 验证文件是否成功生成 ==========
+            if os.path.exists(config_path):
+                file_size = os.path.getsize(config_path)
+                logger.info(f"[{self.task_id}]   ✓ 验证通过: 文件存在，大小 {file_size} 字节")
+
+                # 读取并验证内容
+                with open(config_path, 'r', encoding='utf-8') as f:
+                    content = f.read()
+
+                required_vars = ['ROOT_FOLDER', 'SA_MAX_TIME', 'OPTIMIZATION',
+                                'METHOD', 'INTRA_STATION_BALANCE']
+                missing = [v for v in required_vars if v not in content]
+
+                if missing:
+                    logger.warning(f"[{self.task_id}]   ⚠ 配置文件缺少变量: {missing}")
+                else:
+                    logger.info(f"[{self.task_id}]   ✓ 配置文件包含所有必需变量")
+
+                logger.info(f"[{self.task_id}] ✓ 算法配置文件生成成功!")
+
+                # 保存配置路径供后续清理使用
+                self.algorithm_config_path = config_path
+
+            else:
+                error_msg = f"配置文件写入后仍不存在: {config_path}"
+                logger.error(f"[{self.task_id}]   ✗ {error_msg}")
+                raise FileNotFoundError(error_msg)
+
+        except Exception as e:
+            logger.error(f"[{self.task_id}] ✗ 生成配置文件失败: {e}", exc_info=True)
+            raise RuntimeError(f"无法生成算法配置文件: {e}") from e
+
     def _step2_run_scheduling(self, dataset_path):
         """
-        步骤2: 执行调度算法
+        步骤2: 执行调度算法（简化版）
 
         Args:
             dataset_path: 数据集路径
@@ -171,7 +299,8 @@ class SchedulingService:
         """
         logger.info(f"[{self.task_id}] 【步骤2/5】执行调度算法...")
 
-        # 只传递3个核心参数
+        # ========== 简化版：直接使用 SchedulingAlgorithm ==========
+        # config.py 已经在步骤1.5生成，算法会自动找到
         scheduler = SchedulingAlgorithm(
             dataset_dir=dataset_path,
             output_dir=self.output_dir,
@@ -267,10 +396,26 @@ class SchedulingService:
             os.makedirs(directory, exist_ok=True)
 
     def _cleanup(self):
-        """清理临时文件"""
-        try:
-            if os.path.exists(self.work_dir):
-                shutil.rmtree(self.work_dir)
-                logger.info(f"[{self.task_id}] 临时文件已清理")
-        except Exception as e:
-            logger.warning(f"[{self.task_id}] 清理失败: {str(e)}")
+        """
+        清理临时文件
+
+        ========== 调试模式：暂时禁用清理 ==========
+        保留临时文件以便诊断问题
+        """
+        logger.info(f"[{self.task_id}] ⚠ 清理已禁用（调试模式）")
+        logger.info(f"[{self.task_id}]   临时文件保留在: {self.work_dir}")
+
+        # 暂时注释掉清理代码
+        # try:
+        #     # 1. 清理工作目录
+        #     if os.path.exists(self.work_dir):
+        #         shutil.rmtree(self.work_dir)
+        #         logger.info(f"[{self.task_id}] ✓ 临时工作目录已清理: {self.work_dir}")
+        #
+        #     # 2. 清理算法配置文件（可选）
+        #     if hasattr(self, 'algorithm_config_path') and os.path.exists(self.algorithm_config_path):
+        #         os.remove(self.algorithm_config_path)
+        #         logger.info(f"[{self.task_id}] ✓ 算法配置文件已清理: {self.algorithm_config_path}")
+        #
+        # except Exception as e:
+        #     logger.warning(f"[{self.task_id}] ⚠ 清理失败: {str(e)}")

@@ -9,8 +9,9 @@ from data_processing import process_df_utctime
 from legacy_config import (INTRA_STATION_BALANCE, ANTENNA_LOAD_METHOD, LOAD_WEIGHT_TASK, LOAD_WEIGHT_TIME)
 
 # ========== 站内天线负载均衡：全局变量 ==========
-ANTENNA_TASK_COUNT = None  # [num_stations, 18] - 天线任务数量统计
-ANTENNA_TIME_USAGE = None  # [num_stations, 18] - 天线时间占用统计
+ANTENNA_TASK_COUNT = None  # [num_stations, max_antennas] - 天线任务数量统计
+ANTENNA_TIME_USAGE = None  # [num_stations, max_antennas] - 天线时间占用统计
+MAX_ANTENNAS = 20  # ========== 新增：系统支持的最大天线数 ==========
 
 
 def calculate_antenna_load_score(antenna_task_count, antenna_time_usage, method='C'):
@@ -260,10 +261,17 @@ def cal_avail_dmz(list_cm_avail, keys_line, d1, sp_index, arr_data_all_end_time,
     - 基础可用性：时间约束
     - 负载惩罚：高负载天线的虚拟延迟
     - 结果：高负载天线更难被判定为"可用"
+
+    ========== 新增：边界检查 ==========
     """
-    global ANTENNA_TASK_COUNT, ANTENNA_TIME_USAGE
+    global ANTENNA_TASK_COUNT, ANTENNA_TIME_USAGE, MAX_ANTENNAS
 
     antenna_count = list_cm_avail[d1]
+
+    # ========== 边界检查：不超过数组范围 ==========
+    actual_max_antennas = dmz_cm_use_end_time.shape[1]
+    antenna_count = min(antenna_count, actual_max_antennas)
+
     tmp_time = np.zeros(antenna_count)
     cm_avail_tmp = 0
 
@@ -276,6 +284,10 @@ def cal_avail_dmz(list_cm_avail, keys_line, d1, sp_index, arr_data_all_end_time,
         max_load, avg_load, min_load = 0, 0, 0
 
     for dd in range(antenna_count):
+        # ========== 边界检查：防止索引越界 ==========
+        if dd >= actual_max_antennas:
+            continue
+
         dmz_time = dmz_cm_use_end_time[d1, dd]
         start_time = max(dmz_time, arr_data_all_end_time[d1, sp_index])
 
@@ -326,8 +338,12 @@ def cal_avail_dmz(list_cm_avail, keys_line, d1, sp_index, arr_data_all_end_time,
 def save_use_plan(d1, s1, sp_index, arr_all_start_time, arr_all_end_time, d1_cm_end_time,
                   ground_station_cm_use_plan, ground_station_cm_use_plan_sort_by_start_time,
                   end_time_cm_usage, end_lap_cm_usage, status_index, qv_num):
-    """存储使用方案（改进版：集成站内天线负载均衡）"""
-    global ANTENNA_TASK_COUNT, ANTENNA_TIME_USAGE
+    """
+    存储使用方案（改进版：集成站内天线负载均衡）
+
+    ========== 新增：边界检查 ==========
+    """
+    global ANTENNA_TASK_COUNT, ANTENNA_TIME_USAGE, MAX_ANTENNAS
 
     # 识别可用天线
     available_mask = d1_cm_end_time < 1e10
@@ -339,11 +355,19 @@ def save_use_plan(d1, s1, sp_index, arr_all_start_time, arr_all_end_time, d1_cm_
 
     # 选择天线（核心改进）
     if INTRA_STATION_BALANCE == 'TRUE' and ANTENNA_TASK_COUNT is not None:
+        # ========== 边界检查：确保不超过数组大小 ==========
+        actual_max_antennas = ANTENNA_TASK_COUNT.shape[1]
+        valid_indices = [idx for idx in available_indices if idx < actual_max_antennas]
+
+        if not valid_indices:
+            return (ground_station_cm_use_plan, ground_station_cm_use_plan_sort_by_start_time,
+                    end_time_cm_usage, end_lap_cm_usage)
+
         station_loads = calculate_antenna_load_score(
             ANTENNA_TASK_COUNT[d1, :], ANTENNA_TIME_USAGE[d1, :], method=ANTENNA_LOAD_METHOD)
-        available_loads = station_loads[available_indices]
+        available_loads = station_loads[valid_indices]
         min_load_idx = np.argmin(available_loads)
-        cm_1 = available_indices[min_load_idx]
+        cm_1 = valid_indices[min_load_idx]
     else:
         cm_xxx = np.argsort(d1_cm_end_time)
         cm_1 = cm_xxx[0]
@@ -379,8 +403,8 @@ def save_use_plan(d1, s1, sp_index, arr_all_start_time, arr_all_end_time, d1_cm_
     end_time_cm_usage[d1, cm_1] = end_time
     end_lap_cm_usage[d1, cm_1] = sp_index
 
-    # 更新负载统计
-    if ANTENNA_TASK_COUNT is not None:
+    # ========== 更新负载统计（带边界检查） ==========
+    if ANTENNA_TASK_COUNT is not None and cm_1 < ANTENNA_TASK_COUNT.shape[1]:
         ANTENNA_TASK_COUNT[d1, cm_1] += 1
         ANTENNA_TIME_USAGE[d1, cm_1] += (end_time - start_time)
 
@@ -653,77 +677,18 @@ def check_crossover_overflow(list_cm_avail, ground_station_cm_use_plan, arr_all_
     ground_station_cm_use_plan - 存储使用方案的数组
     arr_all_start_time - 每圈每个地面站观测的开始时间
     arr_all_end_time - 每圈每个地面站观测的结束时间
-    """
-    """
-    flag = 1
-    for i in range(len(list_cm_avail)):
-        j = list_cm_avail[i]
-        for k in range(j):
-            list_check_start_time = []
-            list_check_end_time = []
-            list_x = []
-            for u_p_n in range(ground_station_cm_use_plan.shape[0]):
-                use_plan_line = ground_station_cm_use_plan[u_p_n]
-                if use_plan_line[0] == i + 1 and use_plan_line[1] == k + 1:
-                    list_check_start_time.append(use_plan_line[2])
-                    list_check_end_time.append(use_plan_line[3])
-                    list_x.append(u_p_n)
-            arr_check_start_time = np.array(list_check_start_time)
-            arr_check_end_time = np.array(list_check_end_time)
-            arr_x = np.array(list_x)
-            arr_check_start_time_sort = np.argsort(arr_check_start_time)
-            arr_check_start_time_after_sort = arr_check_start_time[arr_check_start_time_sort]
-            arr_check_end_time_after_sort = arr_check_end_time[arr_check_start_time_sort]
-            arr_x_after_sort = arr_x[arr_check_start_time_sort]
-            arr_data_all_start_time1 = arr_all_start_time[i, arr_x_after_sort]
-            arr_data_all_end_time1 = arr_all_end_time[i, arr_x_after_sort]
-            for ii in range(len(arr_check_start_time_after_sort)):
-                if arr_check_start_time_after_sort[ii] >= arr_data_all_start_time1[ii] and arr_check_end_time_after_sort[ii] <= arr_data_all_end_time1[ii]:
-                    continue
-                else:
-                    flag = 0
-                    break
-            if flag != 1:
-                break
-            ypp = arr_check_start_time_after_sort[1:] - \
-                arr_check_end_time_after_sort[:-1]
-            for ii in ypp:
-                if ii >= 0:
-                    continue
-                else:
-                    flag = 2
-                    break
-            if flag != 1:
-                break
-        if flag != 1:
-            break
 
-    if flag == 0:
-        print('验算结论：存在超出可观测时间的情况')
-    if flag == 1:
-        print('验算结论：观测时间分配合理，无超出可观测时间的情况，同一天线无时间交错的情况')
-    if flag == 2:
-        print('验算结论：同一天线存在时间交错的情况')
-    """
-
-    """
-    检查天线使用时间是否存在交叠或超出可观测时间。
-
-    参数：
-    list_cm_avail - 每个基站的天线数量列表
-    ground_station_cm_use_plan - 存储使用方案的数组
-    arr_all_start_time - 每圈每个地面站观测的开始时间
-    arr_all_end_time - 每圈每个地面站观测的结束时间
+    ========== 修改：增强边界检查 ==========
     """
 
     flag = 1
     for i in range(len(list_cm_avail)):
         j = list_cm_avail[i]
-        # 处理天线数量超过系统限制的情况，避免无效循环
-        max_antenna = 18  # 系统最大支持天线数
-        if j > max_antenna:
-            j = max_antenna
-            print(f"检查时已将地面站{i}的天线数量截断为{max_antenna}")
+        # ========== 新增：处理天线数量超过系统限制的情况 ==========
+        if j > MAX_ANTENNAS:
+            j = MAX_ANTENNAS
+            print(f"检查时已将地面站{i}的天线数量截断为{MAX_ANTENNAS}")
+
         for k in range(j):
             list_check_start_time = []
             list_check_end_time = []
@@ -745,7 +710,7 @@ def check_crossover_overflow(list_cm_avail, ground_station_cm_use_plan, arr_all_
             # 计算排序索引
             arr_check_start_time_sort = np.argsort(arr_check_start_time)
 
-            # 关键修复：定义排序后的开始时间数组（之前遗漏了这行）
+            # 定义排序后的开始时间数组
             arr_check_start_time_after_sort = arr_check_start_time[arr_check_start_time_sort]
             arr_check_end_time_after_sort = arr_check_end_time[arr_check_start_time_sort]
             arr_x_after_sort = arr_x[arr_check_start_time_sort].astype(int)

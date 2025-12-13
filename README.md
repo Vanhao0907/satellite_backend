@@ -113,7 +113,6 @@ Content-Type: application/json
 |------|------|------|------|
 | arc_data | string | 是 | 数据集名称（如 "access_1110to1210"） |
 | antenna_num | object | 是 | 天线配置对象 |
-| strategy | string | 是 | 调度策略（"method_1" \| "method_2" \| "method_3"） |
 | time_window | number | 是 | 最小调度窗口时间（秒） |
 
 **请求示例**:
@@ -122,23 +121,15 @@ Content-Type: application/json
 {
   "arc_data": "access_1110to1210",
   "antenna_num": {
-    "QV": {
-      "CM": 6,
-      "JMS": 14,
-      "KEL": 18,
-      "KS": 5,
-      "MH": 3,
-      "TC": 10,
-      "WC": 6,
-      "XA": 8
-    },
-    "S": {
-      "CQ": 2,
-      "JMS": 3,
-      "KS": 2
-    }
+    "CM": 6,
+    "JMS": 14,
+    "KEL": 18,
+    "KS": 5,
+    "MH": 3,
+    "TC": 10,
+    "WC": 6,
+    "XA": 8
   },
-  "strategy": "method_3",
   "time_window": 300
 }
 ```
@@ -206,6 +197,7 @@ satellite-scheduling-backend/
 │   └── scheduling_service.py
 │
 ├── core/
+│   ├── __init__.py
 │   ├── scheduling_algorithm.py  ← 完整版本
 │   ├── scheduling/              ← 算法模块目录
 │   │   ├── __init__.py
