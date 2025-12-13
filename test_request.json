@@ -1,0 +1,14 @@
+{
+  "arc_data": "access_250804",
+  "antenna_num": {
+    "CM": 6,
+    "JMS": 14,
+    "KEL": 18,
+    "KS": 5,
+    "MH": 3,
+    "TC": 10,
+    "WC": 6,
+    "XA": 8
+  },
+  "time_window": 300
+}
