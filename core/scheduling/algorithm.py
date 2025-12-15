@@ -6,7 +6,8 @@ import itertools
 from tqdm import tqdm
 from utils import show_progress
 from data_processing import process_df_utctime
-from legacy_config import (INTRA_STATION_BALANCE, ANTENNA_LOAD_METHOD, LOAD_WEIGHT_TASK, LOAD_WEIGHT_TIME)
+from core.scheduling.config import (ROOT_FOLDER, OPTIMIZATION, METHOD, ANSWER_TYPE, USE_SA, SA_MAX_TIME,
+                    INTRA_STATION_BALANCE, ANTENNA_LOAD_METHOD, LOAD_WEIGHT_TASK, LOAD_WEIGHT_TIME, TASK_INTERVAL)
 
 # ========== 站内天线负载均衡：全局变量 ==========
 ANTENNA_TASK_COUNT = None  # [num_stations, max_antennas] - 天线任务数量统计
@@ -252,85 +253,97 @@ def data_joint(arr_all_start_time, arr_all_end_time, arr_sat_dmz_num):
     return mim_start_time_sort_add_end_time_add_dmz_num_add_lap, min_start_time_sort_counts
 
 
-def cal_avail_dmz(list_cm_avail, keys_line, d1, sp_index, arr_data_all_end_time,
+def cal_avail_dmz(list_cm_avail, keys_line, d1, sp_index, arr_data_all_start_time,  # ← 参数名修改
                   dmz_cm_use_end_time, dmz_cm_use_end_sp):
     """
-    计算每个地面站可用的天线数量，以及每个天线的使用结束时间
+    计算每个地面站可用的天线数量
 
-    【改进版】集成负载感知的可用性判断：
-    - 基础可用性：时间约束
-    - 负载惩罚：高负载天线的虚拟延迟
-    - 结果：高负载天线更难被判定为"可用"
+    参数:
+        list_cm_avail: 每个地面站的天线数量列表
+        keys_line: 每圈的键列表
+        d1: 地面站索引
+        sp_index: 当前圈数索引
+        arr_data_all_start_time: 每圈每个地面站观测的开始时间 ← 参数名修改
+        dmz_cm_use_end_time: 每个天线的使用结束时间
+        dmz_cm_use_end_sp: 每个天线上一轮观测的卫星圈数索引
 
-    ========== 新增：边界检查 ==========
+    返回:
+        cm_avail_tmp: 可用天线数量
+        tmp_time: 每个天线的结束时间数组
     """
     global ANTENNA_TASK_COUNT, ANTENNA_TIME_USAGE, MAX_ANTENNAS
 
     antenna_count = list_cm_avail[d1]
 
-    # ========== 边界检查：不超过数组范围 ==========
+    # 边界检查
     actual_max_antennas = dmz_cm_use_end_time.shape[1]
     antenna_count = min(antenna_count, actual_max_antennas)
 
     tmp_time = np.zeros(antenna_count)
     cm_avail_tmp = 0
 
+    # 提取当前任务状态（可能被其他逻辑使用）
     status = keys_line[sp_index][-5:]
 
-    # 获取站点负载统计（用于计算惩罚）
+    # 获取站点负载统计（用于负载感知惩罚）
     if LOAD_AWARE_PENALTY == 'TRUE' and ANTENNA_TASK_COUNT is not None:
         max_load, avg_load, min_load = get_station_load_stats(d1)
     else:
         max_load, avg_load, min_load = 0, 0, 0
 
     for dd in range(antenna_count):
-        # ========== 边界检查：防止索引越界 ==========
         if dd >= actual_max_antennas:
             continue
 
-        dmz_time = dmz_cm_use_end_time[d1, dd]
-        start_time = max(dmz_time, arr_data_all_end_time[d1, sp_index])
+        dmz_time = dmz_cm_use_end_time[d1, dd]  # 上次任务结束时间
 
         # ========== 基础可用性检查 ==========
         if dmz_cm_use_end_sp[d1, dd] == 1e10:
-            # 天线从未使用过
+            # 天线从未使用过 → 直接可用
             tmp_time[dd] = dmz_time
             cm_avail_tmp += 1
         else:
-            lap_index = int(dmz_cm_use_end_sp[d1, dd])
-            last_status = keys_line[lap_index][-5:]
+            # 天线之前被使用过 → 检查间隔约束
 
-            # 计算基础时间间隔
-            if last_status == status:
-                time_interval = 300  # 同卫星
-            else:
-                time_interval = 600  # 不同卫星
+            # ========================================
+            # 【核心修改】统一使用配置参数，删除状态判断
+            # 原代码有复杂的 if-else 判断 300/600 秒
+            # 现在统一使用 TASK_INTERVAL
+            # ========================================
+            time_interval = TASK_INTERVAL  # ← 统一使用配置参数
 
-            # ========== 【核心改进】负载感知惩罚 ==========
-            if LOAD_AWARE_PENALTY == 'TRUE' and ANTENNA_TASK_COUNT is not None:
-                # 获取当前天线的负载
-                if ANTENNA_LOAD_METHOD == 'A':
-                    antenna_load = ANTENNA_TASK_COUNT[d1, dd]
-                elif ANTENNA_LOAD_METHOD == 'B':
-                    antenna_load = ANTENNA_TIME_USAGE[d1, dd]
-                else:
-                    antenna_load = (LOAD_WEIGHT_TASK * ANTENNA_TASK_COUNT[d1, dd] +
-                                    LOAD_WEIGHT_TIME * ANTENNA_TIME_USAGE[d1, dd])
+            # ========================================
+            # 【核心修改】使用正确的时间变量
+            # 使用新任务的可见窗口开始时间来判断
+            # ========================================
+            task_visible_start = arr_data_all_start_time[d1, sp_index]  # ← 使用start_time
+            earliest_available = dmz_time + time_interval  # 最早可用时间
 
-                # 计算负载惩罚（虚拟延迟）
-                penalty = calculate_load_penalty(antenna_load, max_load, avg_load)
-
-                # 应用惩罚：高负载天线需要更长的间隔才能"可用"
-                effective_interval = time_interval + penalty
-            else:
-                effective_interval = time_interval
-
-            # 使用调整后的间隔判断可用性
-            if start_time >= dmz_time + effective_interval:
+            # 判断: 新任务可见窗口开始时间 >= 天线最早可用时间?
+            if task_visible_start >= earliest_available:
                 tmp_time[dd] = dmz_time
                 cm_avail_tmp += 1
             else:
-                tmp_time[dd] = 1e20  # 标记为不可用
+                # ========== 可选: 负载感知惩罚 ==========
+                if LOAD_AWARE_PENALTY == 'TRUE' and ANTENNA_TASK_COUNT is not None:
+                    if ANTENNA_LOAD_METHOD == 'A':
+                        antenna_load = ANTENNA_TASK_COUNT[d1, dd]
+                    elif ANTENNA_LOAD_METHOD == 'B':
+                        antenna_load = ANTENNA_TIME_USAGE[d1, dd]
+                    else:
+                        antenna_load = (LOAD_WEIGHT_TASK * ANTENNA_TASK_COUNT[d1, dd] +
+                                        LOAD_WEIGHT_TIME * ANTENNA_TIME_USAGE[d1, dd])
+
+                    penalty = calculate_load_penalty(antenna_load, max_load, avg_load)
+                    effective_interval = time_interval + penalty
+
+                    if task_visible_start >= dmz_time + effective_interval:
+                        tmp_time[dd] = dmz_time
+                        cm_avail_tmp += 1
+                    else:
+                        tmp_time[dd] = 1e20  # 标记为不可用
+                else:
+                    tmp_time[dd] = 1e20  # 标记为不可用
 
     return cm_avail_tmp, tmp_time
 
@@ -339,13 +352,28 @@ def save_use_plan(d1, s1, sp_index, arr_all_start_time, arr_all_end_time, d1_cm_
                   ground_station_cm_use_plan, ground_station_cm_use_plan_sort_by_start_time,
                   end_time_cm_usage, end_lap_cm_usage, status_index, qv_num):
     """
-    存储使用方案（改进版：集成站内天线负载均衡）
+    存储使用方案（修复版：强制执行间隔约束）
 
-    ========== 新增：边界检查 ==========
+    参数:
+        d1: 地面站索引
+        s1: 当前分配次数
+        sp_index: 当前圈数索引
+        arr_all_start_time: 每圈每个地面站观测的开始时间
+        arr_all_end_time: 每圈每个地面站观测的结束时间
+        d1_cm_end_time: 当前地面站每个天线的结束时间
+        ground_station_cm_use_plan: 使用方案数组
+        ground_station_cm_use_plan_sort_by_start_time: 按开始时间排序的使用方案数组
+        end_time_cm_usage: 每个天线的使用结束时间
+        end_lap_cm_usage: 每个天线上一轮观测的卫星圈数索引
+        status_index: 状态索引
+        qv_num: QV频段地面站数量
+
+    返回:
+        更新后的四个数组
     """
     global ANTENNA_TASK_COUNT, ANTENNA_TIME_USAGE, MAX_ANTENNAS
 
-    # 识别可用天线
+    # ========== 步骤1: 识别可用天线 ==========
     available_mask = d1_cm_end_time < 1e10
     available_indices = np.where(available_mask)[0]
 
@@ -353,9 +381,9 @@ def save_use_plan(d1, s1, sp_index, arr_all_start_time, arr_all_end_time, d1_cm_
         return (ground_station_cm_use_plan, ground_station_cm_use_plan_sort_by_start_time,
                 end_time_cm_usage, end_lap_cm_usage)
 
-    # 选择天线（核心改进）
+    # ========== 步骤2: 选择天线（负载均衡逻辑）==========
     if INTRA_STATION_BALANCE == 'TRUE' and ANTENNA_TASK_COUNT is not None:
-        # ========== 边界检查：确保不超过数组大小 ==========
+        # 使用负载均衡策略选择天线
         actual_max_antennas = ANTENNA_TASK_COUNT.shape[1]
         valid_indices = [idx for idx in available_indices if idx < actual_max_antennas]
 
@@ -369,24 +397,37 @@ def save_use_plan(d1, s1, sp_index, arr_all_start_time, arr_all_end_time, d1_cm_
         min_load_idx = np.argmin(available_loads)
         cm_1 = valid_indices[min_load_idx]
     else:
+        # 简单策略：选择最早结束的天线
         cm_xxx = np.argsort(d1_cm_end_time)
         cm_1 = cm_xxx[0]
 
-    # 计算任务时间
-    dmz_time = d1_cm_end_time[cm_1]
-    start_time = max(dmz_time, arr_all_start_time[d1, sp_index])
+    # 【关键修复】强制执行间隔约束
+    # 原代码没有在这里加上间隔时间
+    dmz_time = d1_cm_end_time[cm_1]  # 上次任务结束时间
+
+    # 计算最早可用时间（考虑间隔约束）
+    if end_lap_cm_usage[d1, cm_1] != 1e10:  # 天线之前被使用过
+        earliest_available_time = dmz_time + TASK_INTERVAL  # ← 关键修复: 加上间隔!
+    else:  # 天线从未使用
+        earliest_available_time = dmz_time
+
+    # 新任务实际开始时间 = max(最早可用时间, 可见窗口开始时间)
+    start_time = max(earliest_available_time, arr_all_start_time[d1, sp_index])
+    # ========== 修复结束 ==========
+
+    # ========== 步骤3: 计算结束时间 ==========
     end_time = start_time + 300
     if status_index != 'climb':
         end_time = arr_all_end_time[d1, sp_index]
 
-    # 计算状态匹配标志
+    # ========== 步骤4: 计算状态匹配标志 ==========
     p = 1e10
     if status_index == 'climb':
         p = 1 if d1 >= qv_num else 0
     if status_index != 'climb':
         p = 3 if d1 < qv_num else 2
 
-    # 保存分配方案
+    # ========== 步骤5: 保存分配方案 ==========
     ground_station_cm_use_plan[sp_index, 0] = d1 + 1
     ground_station_cm_use_plan[sp_index, 1] = cm_1 + 1
     ground_station_cm_use_plan[sp_index, 2] = start_time
@@ -399,11 +440,11 @@ def save_use_plan(d1, s1, sp_index, arr_all_start_time, arr_all_end_time, d1_cm_
     ground_station_cm_use_plan_sort_by_start_time[s1, 3] = end_time
     ground_station_cm_use_plan_sort_by_start_time[s1, 4] = p
 
-    # 更新天线状态
+    # ========== 步骤6: 更新天线状态 ==========
     end_time_cm_usage[d1, cm_1] = end_time
     end_lap_cm_usage[d1, cm_1] = sp_index
 
-    # ========== 更新负载统计（带边界检查） ==========
+    # ========== 步骤7: 更新负载统计（如果启用）==========
     if ANTENNA_TASK_COUNT is not None and cm_1 < ANTENNA_TASK_COUNT.shape[1]:
         ANTENNA_TASK_COUNT[d1, cm_1] += 1
         ANTENNA_TIME_USAGE[d1, cm_1] += (end_time - start_time)
@@ -450,32 +491,32 @@ def reallocate_parameter(mim_start_time_sort_add_end_time_add_dmz_num_add_lap, s
 
 def reallocate(mim_start_time_sort_add_end_time_add_dmz_num_add_lap, list_reallocate, list_reallocate_sat_dmz,
                dmz_cm_use_plan, dmz_cm_use_plan_after_sort, sp_index, s1, list_cm_avail, keys_line,
-               arr_data_all_end_time,
+               arr_data_all_end_time,  # 注意: 保留这个参数名但不使用
                dmz_cm_use_end_time_all, dmz_cm_use_end_sp_all, arr_data_all_start_time):
     """
-    重新分配资源，解决时间冲突。
+    重新分配资源，解决时间冲突（修复版：同步间隔约束）
 
-    参数：
-    mim_start_time_sort_add_end_time_add_dmz_num_add_lap - 每圈的开始时间、结束时间、地面站数量和圈数的组合
-    list_reallocate - 需要重新分配的圈数列表
-    list_reallocate_sat_dmz - 需要重新分配的地面站列表
-    dmz_cm_use_plan - 存储使用方案的数组
-    dmz_cm_use_plan_after_sort - 按开始时间排列的使用方案数组
-    sp_index - 当前圈数的index
-    s1 - 当前分配次数
-    list_cm_avail - 每个基站的天线数量列表
-    keys_line - 每圈的键列表
-    arr_data_all_end_time - 每圈每个地面站观测的结束时间
-    dmz_cm_use_end_time_all - 每个天线的使用结束时间
-    dmz_cm_use_end_sp_all - 每个天线上一轮观测的卫星圈数index
-    arr_data_all_start_time - 每圈每个地面站观测的开始时间
+    参数:
+        mim_start_time_sort_add_end_time_add_dmz_num_add_lap: 每圈的开始时间、结束时间等信息
+        list_reallocate: 需要重新分配的圈数列表
+        list_reallocate_sat_dmz: 需要重新分配的地面站列表
+        dmz_cm_use_plan: 存储使用方案的数组
+        dmz_cm_use_plan_after_sort: 按开始时间排列的使用方案数组
+        sp_index: 当前圈数索引
+        s1: 当前分配次数
+        list_cm_avail: 每个基站的天线数量列表
+        keys_line: 每圈的键列表
+        arr_data_all_end_time: 每圈每个地面站观测的结束时间（保留但不使用）
+        dmz_cm_use_end_time_all: 每个天线的使用结束时间
+        dmz_cm_use_end_sp_all: 每个天线上一轮观测的卫星圈数索引
+        arr_data_all_start_time: 每圈每个地面站观测的开始时间 ← 实际使用这个
 
-    返回值：
-    flagx - 是否成功重新分配的标志
-    list_reallocate_tmp - 重新分配后的圈数列表
-    dmz_cm_use_end_time_x2_tmp - 重新分配后的天线使用结束时间
-    dmz_cm_use_end_sp_x2_tmp - 重新分配后的天线使用结束时间对应的圈数index
-    use_plan - 重新分配后的使用方案
+    返回:
+        flagx: 是否成功重新分配的标志
+        list_reallocate_tmp: 重新分配后的圈数列表
+        dmz_cm_use_end_time_x2_tmp: 重新分配后的天线使用结束时间
+        dmz_cm_use_end_sp_x2_tmp: 重新分配后的天线使用结束时间对应的圈数索引
+        use_plan: 重新分配后的使用方案
     """
     dmz_cm_use_end_time_x2_tmp = 0  # 初始化为0
     dmz_cm_use_end_sp_x2_tmp = 0  # 同步初始化关联变量
@@ -491,6 +532,7 @@ def reallocate(mim_start_time_sort_add_end_time_add_dmz_num_add_lap, list_reallo
         list_reallocate_sat_dmz_tmp = list_reallocate_sat_dmz[x1:]
         combinations = itertools.product(*list_reallocate_sat_dmz_tmp)
         ypp1 = list(combinations)
+
         if len(ypp1) == 1:
             dmz_cm_use_plan[sp_index, :] = 1e20
             dmz_cm_use_plan_after_sort[s1, :] = 1e20
@@ -499,52 +541,92 @@ def reallocate(mim_start_time_sort_add_end_time_add_dmz_num_add_lap, list_reallo
             for x2 in ypp1:
                 s1_tmp = list_reallocate[- len(x2)]
                 list_reallocate_tmp = list_reallocate[- len(x2):]
+
+                # 复制天线使用状态
                 dmz_cm_use_end_time_tmp = copy.deepcopy(
                     dmz_cm_use_end_time_all[s1_tmp * num_stations - num_stations:s1_tmp * num_stations])
                 dmz_cm_use_end_sp_tmp = copy.deepcopy(
                     dmz_cm_use_end_sp_all[s1_tmp * num_stations - num_stations:s1_tmp * num_stations])
-                dmz_cm_use_end_time_x2_tmp = np.zeros(
-                    (len(x2) * num_stations, 8))
-                dmz_cm_use_end_sp_x2_tmp = np.zeros(
-                    (len(x2) * num_stations, 8))
+
+                dmz_cm_use_end_time_x2_tmp = np.zeros((len(x2) * num_stations, 8))
+                dmz_cm_use_end_sp_x2_tmp = np.zeros((len(x2) * num_stations, 8))
                 use_plan = np.zeros((len(x2), 5))
                 count1 = 0
                 flag = 1
+
+                # 检查是否有冲突
                 for x2_id, x2_v in enumerate(x2):
                     if x2_id != len(x2) - 1 and x2_v in list_reallocate_sat_dmz[-1] and len(
                             list_reallocate_sat_dmz[x2_id - len(x2)]) > 1:
                         flag = 0
                         break
+
                 if flag == 0:
                     continue
+
+                # 尝试重新分配每个任务
                 for x2_id, x2_v in enumerate(x2):
                     sp_index1 = mim_start_time_sort_add_end_time_add_dmz_num_add_lap[
                         list_reallocate_tmp[x2_id], -1]
-                    cm1, time_end = cal_avail_dmz(list_cm_avail, keys_line, x2_v, sp_index1, arr_data_all_end_time,
-                                                  dmz_cm_use_end_time_tmp, dmz_cm_use_end_sp_tmp)
+
+                    # ========================================
+                    # 【修改1】调用cal_avail_dmz时使用start_time
+                    # 原代码: cal_avail_dmz(..., arr_data_all_end_time, ...)
+                    # 修改后: cal_avail_dmz(..., arr_data_all_start_time, ...)
+                    # ========================================
+                    cm1, time_end = cal_avail_dmz(
+                        list_cm_avail, keys_line, x2_v, sp_index1,
+                        arr_data_all_start_time,  # ← 修改: 使用start_time
+                        dmz_cm_use_end_time_tmp, dmz_cm_use_end_sp_tmp
+                    )
+
                     if cm1 == 0:
                         break
                     else:
+                        # 选择最早结束的天线
                         cm_xxx = np.argsort(time_end)
-                        dmz_time = time_end[cm_xxx[0]]
-                        start_time = max(
-                            dmz_time, arr_data_all_start_time[x2_v, sp_index1])
-                        end_time = start_time + 300
                         cm_1 = cm_xxx[0]
+                        dmz_time = time_end[cm_1]
+
+                        # ========================================
+                        # 【修改2】计算开始时间时加上间隔约束
+                        # 原代码:
+                        #   start_time = max(dmz_time, arr_data_all_start_time[x2_v, sp_index1])
+                        #
+                        # 修改后: 加上TASK_INTERVAL间隔
+                        # ========================================
+                        if dmz_cm_use_end_sp_tmp[x2_v, cm_1] != 1e10:
+                            earliest_available = dmz_time + TASK_INTERVAL  # ← 修改: 加间隔
+                        else:
+                            earliest_available = dmz_time
+
+                        start_time = max(earliest_available, arr_data_all_start_time[x2_v, sp_index1])
+                        # ========== 修改结束 ==========
+
+                        end_time = start_time + 300
+
+                        # 记录使用方案
                         use_plan[x2_id, 0] = x2_v + 1
                         use_plan[x2_id, 1] = cm_1 + 1
                         use_plan[x2_id, 2] = start_time
                         use_plan[x2_id, 3] = end_time
                         use_plan[x2_id, 4] = sp_index1
+
+                        # 更新天线使用状态
                         dmz_cm_use_end_time_tmp[x2_v, cm_1] = end_time
                         dmz_cm_use_end_sp_tmp[x2_v, cm_1] = sp_index
+
+                    # 保存每次迭代的状态
                     dmz_cm_use_end_time_x2_tmp[x2_id * num_stations: x2_id * num_stations + len(
                         list_cm_avail), :] = dmz_cm_use_end_time_tmp[:num_stations, :]
                     dmz_cm_use_end_sp_x2_tmp[x2_id * num_stations: x2_id * num_stations + len(
                         list_cm_avail), :] = dmz_cm_use_end_sp_tmp[:num_stations, :]
+
+                # 检查是否成功分配所有任务
                 if count1 == len(x2):
                     flagx = 1
                     break
+
             if flagx == 1:
                 break
 

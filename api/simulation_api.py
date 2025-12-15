@@ -53,6 +53,8 @@ def run_simulation():
         }
     }
     """
+    logger.info(f"收到请求！来源IP: {request.remote_addr}")
+    logger.info(f"请求数据: {request.get_json()}")
     try:
         # 1. 获取请求参数
         if not request.is_json:

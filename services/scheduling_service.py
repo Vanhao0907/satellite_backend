@@ -204,15 +204,16 @@ class SchedulingService:
             root_folder = os.path.join(dataset_path, 'QV')
             logger.info(f"[{self.task_id}]   ROOT_FOLDER = {root_folder}")
 
-            # 2. SA_MAX_TIME: 从前端 time_window 参数获取
-            sa_max_time = self.params['time_window']
-            logger.info(f"[{self.task_id}]   SA_MAX_TIME = {sa_max_time} (来自 time_window)")
+            # 2. TASK_INTERVAL: 从前端 time_window 参数获取
+            time_window = self.params['time_window']
+            logger.info(f"[{self.task_id}]   TASK_INTERVAL = {time_window} (来自 time_window)")
 
             # 3. 其他参数：使用默认值
             optimization = 'TRUE'
             method = 3
             answer_type = 'TRUE'
             use_sa = 'FALSE'
+            SA_MAX_TIME = 300
             intra_station_balance = 'FALSE'
             antenna_load_method = 'B'
             load_weight_task = 0.3
@@ -232,8 +233,9 @@ ROOT_FOLDER = r'{root_folder}'
 OPTIMIZATION = '{optimization}'  # 是否启用优化
 METHOD = {method}  # 调度方法: 1=时间窗口优先, 2=天线可用率优先, 3=天线均衡优先(推荐)
 ANSWER_TYPE = '{answer_type}'  # 是否输出Excel格式结果
+TASK_INTERVAL = {time_window}  # 来自前端 time_window 参数
 USE_SA = '{use_sa}'  # 是否使用模拟退火优化
-SA_MAX_TIME = {sa_max_time}  # 模拟退火最大时间(秒) - 来自前端 time_window 参数
+SA_MAX_TIME = 300  # 模拟退火最大时间(秒)
 
 # ========== 站内天线负载均衡策略配置 ==========
 INTRA_STATION_BALANCE = '{intra_station_balance}'  # 是否启用站内天线负载均衡
@@ -264,7 +266,7 @@ LOAD_WEIGHT_TIME = {load_weight_time}  # 时间占用权重 (仅method=C时使�
                 with open(config_path, 'r', encoding='utf-8') as f:
                     content = f.read()
 
-                required_vars = ['ROOT_FOLDER', 'SA_MAX_TIME', 'OPTIMIZATION',
+                required_vars = ['ROOT_FOLDER', 'TASK_INTERVAL', 'OPTIMIZATION',
                                 'METHOD', 'INTRA_STATION_BALANCE']
                 missing = [v for v in required_vars if v not in content]
 

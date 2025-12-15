@@ -11,7 +11,7 @@ from algorithm import (count_time_station_num, data_joint, cal_avail_dmz, save_u
                        iterative_optimization, cal_success_rate, check_crossover_overflow, answer_type_transform,
                        resorted_by_status)
 from core.scheduling.config import (ROOT_FOLDER, OPTIMIZATION, METHOD, ANSWER_TYPE, USE_SA, SA_MAX_TIME,
-                    INTRA_STATION_BALANCE, ANTENNA_LOAD_METHOD, LOAD_WEIGHT_TASK, LOAD_WEIGHT_TIME)
+                    INTRA_STATION_BALANCE, ANTENNA_LOAD_METHOD, LOAD_WEIGHT_TASK, LOAD_WEIGHT_TIME, TASK_INTERVAL)
 from validate_results import validate_allocation_results
 from simulated_annealing import optimize_with_sa
 
@@ -138,7 +138,7 @@ def main():
                 status = keys_line[sp_index][-5:]
                 for d1 in range(num_stations):
                     if ground_station_start_time_in_one_lap[d1] != 1e10:
-                        cm_a, _ = cal_avail_dmz(list_cm_avail, keys_line, d1, sp_index, arr_all_end_time,
+                        cm_a, _ = cal_avail_dmz(list_cm_avail, keys_line, d1, sp_index, arr_all_start_time,
                                                 end_time_cm_usage, end_lap_cm_usage)
                         arr_tmp_cm[d1] = cm_a / list_cm_avail[d1]
 
@@ -188,7 +188,7 @@ def main():
                         continue
                     else:
                         cm_a, d1_cm_end_time = cal_avail_dmz(list_cm_avail, keys_line, d1, sp_index,
-                                                             arr_all_end_time,
+                                                             arr_all_start_time,
                                                              end_time_cm_usage, end_lap_cm_usage)
                         if cm_a <= 0:
                             continue
