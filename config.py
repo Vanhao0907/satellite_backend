@@ -26,17 +26,31 @@ class Config:
     HOST = os.getenv('HOST', '0.0.0.0')
     PORT = int(os.getenv('PORT', 5000))
 
+    # ========== 新增：服务器URL配置 ==========
+    # 用于生成静态文件的访问URL
+    SERVER_URL = os.getenv('SERVER_URL', f'http://172.16.1.84:{PORT}')
+    # 如果部署到生产环境，设置为：http://your-domain.com 或 https://api.example.com
+
     # 目录配置
     RAW_DATA_DIR = os.path.join(BASE_DIR, os.getenv('RAW_DATA_DIR', 'data/raw'))
     TEMP_DATA_DIR = os.path.join(BASE_DIR, os.getenv('TEMP_DATA_DIR', 'data/temp'))
     LOG_DIR = os.path.join(BASE_DIR, os.getenv('LOG_DIR', 'logs'))
 
-    # ========== 新增：系统约束配置 ==========
-    MAX_ANTENNAS_PER_STATION = int(os.getenv('MAX_ANTENNAS_PER_STATION', 20))  # 单站最大天线数
+    # ========== 新增：静态文件目录配置 ==========
+    STATIC_FILES_DIR = os.path.join(BASE_DIR, os.getenv('STATIC_FILES_DIR', 'data/static'))
+    # 静态文件URL前缀（相对于SERVER_URL）
+    STATIC_URL_PREFIX = '/static'
+
+    # ========== 系统约束配置 ==========
+    MAX_ANTENNAS_PER_STATION = int(os.getenv('MAX_ANTENNAS_PER_STATION', 20))
 
     # 临时文件清理策略
     AUTO_CLEANUP = os.getenv('AUTO_CLEANUP', 'False').lower() == 'true'
     CLEANUP_KEEP_DAYS = int(os.getenv('CLEANUP_KEEP_DAYS', 7))
+
+    # ========== 新增：静态文件清理策略 ==========
+    AUTO_CLEANUP_STATIC = os.getenv('AUTO_CLEANUP_STATIC', 'True').lower() == 'true'
+    STATIC_KEEP_DAYS = int(os.getenv('STATIC_KEEP_DAYS', 30))  # 静态文件保留30天
 
     # 日志配置
     LOG_LEVEL = os.getenv('LOG_LEVEL', 'INFO')
@@ -56,6 +70,12 @@ class Config:
     # CORS配置
     CORS_ORIGINS = os.getenv('CORS_ORIGINS', '*')
 
+    # ========== 新增：图片导出配置 ==========
+    IMAGE_WIDTH = int(os.getenv('IMAGE_WIDTH', 1280))  # 图片宽度
+    IMAGE_HEIGHT = int(os.getenv('IMAGE_HEIGHT', 720))  # 图片高度
+    IMAGE_FORMAT = os.getenv('IMAGE_FORMAT', 'jpeg')  # 图片格式：jpeg, png
+    IMAGE_QUALITY = int(os.getenv('IMAGE_QUALITY', 60))  # JPG质量：1-100
+
     # 可选：OSS配置
     OSS_ENABLED = os.getenv('OSS_ENABLED', 'False').lower() == 'true'
     OSS_ENDPOINT = os.getenv('OSS_ENDPOINT', '')
@@ -69,6 +89,7 @@ class Config:
         os.makedirs(cls.RAW_DATA_DIR, exist_ok=True)
         os.makedirs(cls.TEMP_DATA_DIR, exist_ok=True)
         os.makedirs(cls.LOG_DIR, exist_ok=True)
+        os.makedirs(cls.STATIC_FILES_DIR, exist_ok=True)  # ← 新增
 
     @classmethod
     def validate(cls):
@@ -93,6 +114,8 @@ class ProductionConfig(Config):
     DEBUG = False
     LOG_LEVEL = 'INFO'
     AUTO_CLEANUP = True
+    # 生产环境应设置真实域名
+    # SERVER_URL = 'https://api.yourdomain.com'
 
 
 class TestingConfig(Config):

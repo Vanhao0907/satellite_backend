@@ -1,7 +1,7 @@
 """
-满足度分析图生成 - 原始脚本封装版（按小时统计）
+满足度分析图生成 - 原始脚本封装版（按小时统计，支持返回Figure对象）
 基于原始脚本: 7manzudu_groupbyhour.py
-功能: 将原始脚本封装为可调用的函数，几乎不修改核心逻辑
+功能: 将原始脚本封装为可调用的函数，同时返回HTML和Figure对象
 """
 import os
 import pandas as pd
@@ -12,7 +12,7 @@ from plotly.subplots import make_subplots
 
 def generate_satisfaction_chart(source_dir, output_dir):
     """
-    生成满足度分析图（按小时统计）
+    生成满足度分析图（按小时统计）- 仅返回HTML（保持向后兼容）
 
     参数:
     source_dir: 结果CSV文件所在目录
@@ -20,6 +20,23 @@ def generate_satisfaction_chart(source_dir, output_dir):
 
     返回:
     str: 满足度图HTML内容
+    """
+    html_content, _ = generate_satisfaction_chart_with_figure(source_dir, output_dir)
+    return html_content
+
+
+def generate_satisfaction_chart_with_figure(source_dir, output_dir):
+    """
+    生成满足度分析图（按小时统计）- 返回HTML和Figure对象（新增）
+
+    参数:
+    source_dir: 结果CSV文件所在目录
+    output_dir: HTML输出目录
+
+    返回:
+    tuple: (html_content, fig)
+        - html_content: 满足度图HTML字符串
+        - fig: Plotly Figure对象
     """
     # ========== 以下代码几乎完全来自原始 7manzudu_groupbyhour.py ==========
 
@@ -88,7 +105,7 @@ def generate_satisfaction_chart(source_dir, output_dir):
     if not all_data:
         print("警告: 未找到CSV文件")
         # 返回空白图表
-        return """
+        error_html = """
         <!DOCTYPE html>
         <html>
         <head><title>满足度分析图</title></head>
@@ -98,6 +115,7 @@ def generate_satisfaction_chart(source_dir, output_dir):
         </body>
         </html>
         """
+        return error_html, None
 
     combined_df = pd.concat(all_data, ignore_index=True)
     print(f"合并数据: {len(combined_df)} 行")
@@ -263,7 +281,7 @@ def generate_satisfaction_chart(source_dir, output_dir):
     # 设置 X 轴范围（0-23小时）
     fig1.update_xaxes(range=[-0.5, 23.5], dtick=1)
 
-    # ========== 修改部分：返回HTML而不是显示 ==========
+    # ========== 修改部分：生成HTML并返回Figure对象 ==========
     # 生成 HTML 内容
     html_content = fig1.to_html(
         include_plotlyjs='cdn',
@@ -280,8 +298,8 @@ def generate_satisfaction_chart(source_dir, output_dir):
     final_df.to_csv(final_df_path, index=False)
     print(f"处理后的数据已保存: {final_df_path}")
 
-    # 返回 HTML 内容
-    return html_content
+    # 返回 HTML 内容和 Figure 对象
+    return html_content, fig1
 
 
 def main():
@@ -297,9 +315,10 @@ def main():
     source_dir = sys.argv[1]
     output_dir = sys.argv[2]
 
-    html_content = generate_satisfaction_chart(source_dir, output_dir)
+    html_content, fig = generate_satisfaction_chart_with_figure(source_dir, output_dir)
     print(f"\n✓ 满足度分析图生成完成（按小时统计）")
     print(f"HTML长度: {len(html_content)} 字符")
+    print(f"Figure对象: {type(fig)}")
 
 
 if __name__ == '__main__':

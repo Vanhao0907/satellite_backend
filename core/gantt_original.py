@@ -1,7 +1,7 @@
 """
-甘特图生成 - 原始脚本封装版
+甘特图生成 - 原始脚本封装版（支持返回Figure对象）
 基于原始脚本: 6gantetu.py
-功能: 将原始脚本封装为可调用的函数，几乎不修改核心逻辑
+功能: 将原始脚本封装为可调用的函数，同时返回HTML和Figure对象
 """
 import pandas as pd
 import plotly.express as px
@@ -12,7 +12,7 @@ import re
 
 def generate_gantt_chart(source_dir, output_dir):
     """
-    生成甘特图
+    生成甘特图 - 仅返回HTML（保持向后兼容）
 
     参数:
     source_dir: 结果CSV文件所在目录
@@ -20,6 +20,23 @@ def generate_gantt_chart(source_dir, output_dir):
 
     返回:
     str: 甘特图HTML内容
+    """
+    html_content, _ = generate_gantt_chart_with_figure(source_dir, output_dir)
+    return html_content
+
+
+def generate_gantt_chart_with_figure(source_dir, output_dir):
+    """
+    生成甘特图 - 返回HTML和Figure对象（新增）
+
+    参数:
+    source_dir: 结果CSV文件所在目录
+    output_dir: HTML输出目录
+
+    返回:
+    tuple: (html_content, fig)
+        - html_content: 甘特图HTML字符串
+        - fig: Plotly Figure对象
     """
     # ========== 以下代码几乎完全来自原始 6gantetu.py ==========
 
@@ -54,7 +71,7 @@ def generate_gantt_chart(source_dir, output_dir):
     if not df_list:
         print("未找到任何 CSV 文件或所有文件读取失败。")
         # 返回空白图表
-        return """
+        error_html = """
         <!DOCTYPE html>
         <html>
         <head><title>甘特图</title></head>
@@ -64,6 +81,7 @@ def generate_gantt_chart(source_dir, output_dir):
         </body>
         </html>
         """
+        return error_html, None
 
     # 合并所有 DataFrame
     df = pd.concat(df_list, ignore_index=True)
@@ -74,7 +92,7 @@ def generate_gantt_chart(source_dir, output_dir):
     df['start'] = pd.to_datetime(df['start'], format='mixed')
     df['stop'] = pd.to_datetime(df['stop'], format='mixed')
 
-    # 过滤出 allocation_status 为 2 或 3 的数据
+    # 过滤出 allocation_status 为 1, 2, 3, 4 的数据
     df_filtered = df[df['allocation_status'].isin([1, 2, 3, 4])]
 
     # 定义 y 轴的排序顺序
@@ -116,7 +134,7 @@ def generate_gantt_chart(source_dir, output_dir):
 
     # 定义颜色映射
     color_map = {
-        'CSCN_试验': 'blue',  # 金色
+        'CSCN_试验': 'blue',  # 蓝色
         'CSCN_A': '#87CEEB',  # 天蓝色
         'CSCN_X': '#FF6347',  # 番茄红
         'CSCN_j': '#9370DB',  # 中紫色
@@ -152,7 +170,7 @@ def generate_gantt_chart(source_dir, output_dir):
         height=1000,  # 调整图表高度
     )
 
-    # ========== 修改部分：返回HTML而不是显示 ==========
+    # ========== 修改部分：生成HTML并返回Figure对象 ==========
     # 生成 HTML 内容
     html_content = fig.to_html(
         include_plotlyjs='cdn',
@@ -160,12 +178,13 @@ def generate_gantt_chart(source_dir, output_dir):
     )
 
     # 同时保存文件（保持原有功能）
+    os.makedirs(output_dir, exist_ok=True)
     chart_path = os.path.join(output_dir, "gantt_chart.html")
     fig.write_html(chart_path)
     print(f"甘特图已保存: {chart_path}")
 
-    # 返回 HTML 内容
-    return html_content
+    # 返回 HTML 内容和 Figure 对象
+    return html_content, fig
 
 
 def main():
@@ -181,9 +200,10 @@ def main():
     source_dir = sys.argv[1]
     output_dir = sys.argv[2]
 
-    html_content = generate_gantt_chart(source_dir, output_dir)
+    html_content, fig = generate_gantt_chart_with_figure(source_dir, output_dir)
     print(f"\n✓ 甘特图生成完成")
     print(f"HTML长度: {len(html_content)} 字符")
+    print(f"Figure对象: {type(fig)}")
 
 
 if __name__ == '__main__':

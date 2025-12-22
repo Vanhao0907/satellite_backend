@@ -1,5 +1,5 @@
 """
-卫星资源调度仿真API - 仅QV频段版本
+卫星资源调度仿真API - 仅QV频段版本（支持图片导出）
 提供单一接口：POST /api/simulations
 """
 from flask import Blueprint, request, jsonify, current_app
@@ -14,7 +14,7 @@ logger = logging.getLogger(__name__)
 @simulation_bp.route('/simulations', methods=['POST'])
 def run_simulation():
     """
-    执行卫星资源调度仿真 (仅QV频段)
+    执行卫星资源调度仿真 (仅QV频段，支持图片导出)
 
     请求示例:
     POST /api/simulations
@@ -35,11 +35,6 @@ def run_simulation():
         "time_window": 300
     }
 
-    参数说明:
-    - arc_data: 数据集名称 (必需)
-    - antenna_num: QV频段各站点天线数量 (必需)
-    - time_window: 最小观测时间窗口(秒) (必需)
-
     返回示例:
     {
         "code": 200,
@@ -48,7 +43,12 @@ def run_simulation():
             "task_id": "task_20241212_134523",
             "elapsed_time": 287.5,
             "statistics": {...},
-            "charts": {...},
+            "charts": {
+                "gantt_chart_html": "<html>...</html>",
+                "gantt_chart_image_url": "http://localhost:5000/static/task_xxx_gantt.jpeg",
+                "satisfaction_chart_html": "<html>...</html>",
+                "satisfaction_chart_image_url": "http://localhost:5000/static/task_xxx_satisfaction.jpeg"
+            },
             "validation": {...}
         }
     }
@@ -108,7 +108,7 @@ def run_simulation():
                 'data': None
             }), 400
 
-        # ========== 新增：天线数量上限验证 ==========
+        # 天线数量上限验证
         max_antennas = current_app.config.get('MAX_ANTENNAS_PER_STATION', 20)
         for station, count in params['antenna_num'].items():
             if count > max_antennas:
@@ -133,6 +133,8 @@ def run_simulation():
 
         # 5. 返回成功响应
         logger.info(f"调度完成: task_id={result['task_id']}, elapsed_time={result['elapsed_time']}s")
+        logger.info(f"甘特图URL: {result['charts']['gantt_chart_image_url']}")
+        logger.info(f"满足度图URL: {result['charts']['satisfaction_chart_image_url']}")
 
         return jsonify({
             'code': 200,
@@ -175,6 +177,7 @@ def test_endpoint():
     用于验证API是否正常工作
     """
     max_antennas = current_app.config.get('MAX_ANTENNAS_PER_STATION', 20)
+    server_url = current_app.config.get('SERVER_URL', 'http://localhost:5000')
 
     return jsonify({
         'code': 200,
@@ -183,8 +186,11 @@ def test_endpoint():
             'endpoint': '/api/simulations',
             'method': 'POST',
             'status': 'available',
-            'version': 'QV_ONLY_v2.0',
+            'version': 'QV_ONLY_v2.1_with_image_export',  # ← 更新版本号
             'required_params': ['arc_data', 'antenna_num', 'time_window'],
-            'max_antennas_per_station': max_antennas
+            'max_antennas_per_station': max_antennas,
+            'server_url': server_url,
+            'static_url_prefix': current_app.config.get('STATIC_URL_PREFIX', '/static'),
+            'features': ['HTML_Charts', 'Image_Export_JPEG']  # ← 新增
         }
     }), 200

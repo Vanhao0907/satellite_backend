@@ -22,12 +22,27 @@ def read_multiple_csv_files_return_data(root_folder):
         print(f"Warning: Root folder '{root_folder}' does not exist. Skipping this path.")
         return all_data # 如果根文件夹不存在，直接返回空列表
 
-    for folder_name in os.listdir(root_folder):
+    # ========== 修复：强制排序 ==========
+
+
+    folder_names = sorted(os.listdir(root_folder))
+
+
+    # ===================================
+
+
+    for folder_name in folder_names:
         folder_path = os.path.join(root_folder, folder_name)
         if os.path.isdir(folder_path):
             print(f"Reading files from folder: {folder_name}")
             folder_data = []
-            for file_name in os.listdir(folder_path):
+            # ========== 修复：文件排序 ==========
+
+            file_names = sorted(os.listdir(folder_path))
+
+            # =====================================
+
+            for file_name in file_names:
                 if file_name.endswith('.csv'):
                     file_path = os.path.join(folder_path, file_name)
                     # 单个 CSV 文件损坏或无法读取时，跳过该文件并打印错误信息
