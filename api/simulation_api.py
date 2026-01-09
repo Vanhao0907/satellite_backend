@@ -1,5 +1,5 @@
 """
-卫星资源调度仿真API - 仅QV频段版本（支持图片导出）
+卫星资源调度仿真API - 仅QV频段版本（支持图片导出 + 算法选择 + 数据集统计 + ZIP下载）
 提供单一接口：POST /api/simulations
 """
 from flask import Blueprint, request, jsonify, current_app
@@ -14,14 +14,14 @@ logger = logging.getLogger(__name__)
 @simulation_bp.route('/simulations', methods=['POST'])
 def run_simulation():
     """
-    执行卫星资源调度仿真 (仅QV频段，支持图片导出)
+    执行卫星资源调度仿真 (仅QV频段，支持图片导出、算法选择、统计信息、ZIP下载)
 
     请求示例:
     POST /api/simulations
     Content-Type: application/json
 
     {
-        "arc_data": "access_1110to1210",
+        "arc_data": "access_251017",
         "antenna_num": {
             "CM": 6,
             "JMS": 14,
@@ -32,6 +32,7 @@ def run_simulation():
             "WC": 6,
             "XA": 8
         },
+        "strategy": "优先级驱动式资源调度算法",
         "time_window": 300
     }
 
@@ -42,13 +43,27 @@ def run_simulation():
         "data": {
             "task_id": "task_20241212_134523",
             "elapsed_time": 287.5,
-            "statistics": {...},
+            "statistics": {
+                "success_rate_all": 0.956,
+                ...,
+                "station_data_counts": {
+                    "CM": 1200,
+                    "JMS": 2800,
+                    ...
+                },
+                "satellite_type_counts": {
+                    "A": 150,
+                    "B": 200,
+                    ...
+                }
+            },
             "charts": {
                 "gantt_chart_html": "<html>...</html>",
-                "gantt_chart_image_url": "http://localhost:5000/static/task_xxx_gantt.jpeg",
+                "gantt_chart_image_url": "http://...",
                 "satisfaction_chart_html": "<html>...</html>",
-                "satisfaction_chart_image_url": "http://localhost:5000/static/task_xxx_satisfaction.jpeg"
+                "satisfaction_chart_image_url": "http://..."
             },
+            "dataset_zip_url": "http://localhost:5000/static/task_xxx_dataset.zip",
             "validation": {...}
         }
     }
@@ -67,7 +82,7 @@ def run_simulation():
         params = request.get_json()
 
         # 2. 验证必需参数
-        required_fields = ['arc_data', 'antenna_num', 'time_window']
+        required_fields = ['arc_data', 'antenna_num', 'time_window', 'strategy']
         missing_fields = [field for field in required_fields if field not in params]
 
         if missing_fields:
@@ -108,6 +123,22 @@ def run_simulation():
                 'data': None
             }), 400
 
+        if not isinstance(params['strategy'], str):
+            return jsonify({
+                'code': 400,
+                'message': 'strategy必须为字符串',
+                'data': None
+            }), 400
+
+        # 验证strategy参数
+        valid_strategies = ["优先级驱动式资源调度算法", "GRU模拟退火算法"]
+        if params['strategy'] not in valid_strategies:
+            return jsonify({
+                'code': 400,
+                'message': f'strategy必须为以下之一: {", ".join(valid_strategies)}',
+                'data': None
+            }), 400
+
         # 天线数量上限验证
         max_antennas = current_app.config.get('MAX_ANTENNAS_PER_STATION', 20)
         for station, count in params['antenna_num'].items():
@@ -122,12 +153,13 @@ def run_simulation():
         logger.info(
             f"接收到调度请求: "
             f"arc_data={params['arc_data']}, "
+            f"strategy={params['strategy']}, "
             f"time_window={params['time_window']}, "
             f"stations={list(params['antenna_num'].keys())}, "
             f"total_antennas={sum(params['antenna_num'].values())}"
         )
 
-        # 4. 调用业务逻辑服务
+        # 4. 调用业务逻辑服务（直接传递params，无需转换）
         service = SchedulingService(params)
         result = service.execute()
 
@@ -135,6 +167,7 @@ def run_simulation():
         logger.info(f"调度完成: task_id={result['task_id']}, elapsed_time={result['elapsed_time']}s")
         logger.info(f"甘特图URL: {result['charts']['gantt_chart_image_url']}")
         logger.info(f"满足度图URL: {result['charts']['satisfaction_chart_image_url']}")
+        logger.info(f"数据集ZIP URL: {result.get('dataset_zip_url', 'N/A')}")
 
         return jsonify({
             'code': 200,
@@ -186,11 +219,17 @@ def test_endpoint():
             'endpoint': '/api/simulations',
             'method': 'POST',
             'status': 'available',
-            'version': 'QV_ONLY_v2.1_with_image_export',  # ← 更新版本号
-            'required_params': ['arc_data', 'antenna_num', 'time_window'],
+            'version': 'QV_ONLY_v3.0_with_stats_and_zip',
+            'required_params': ['arc_data', 'antenna_num', 'strategy', 'time_window'],
             'max_antennas_per_station': max_antennas,
             'server_url': server_url,
             'static_url_prefix': current_app.config.get('STATIC_URL_PREFIX', '/static'),
-            'features': ['HTML_Charts', 'Image_Export_JPEG']  # ← 新增
+            'features': [
+                'HTML_Charts',
+                'Image_Export_JPEG',
+                'Algorithm_Selection',
+                'Dataset_Statistics',
+                'ZIP_Download'
+            ]
         }
     }), 200

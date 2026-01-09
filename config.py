@@ -29,7 +29,7 @@ class Config:
     # ========== 新增：服务器URL配置 ==========
     # 用于生成静态文件的访问URL
     SERVER_URL = os.getenv('SERVER_URL', f'http://172.16.1.84:{PORT}')
-    # 如果部署到生产环境，设置为：http://your-domain.com 或 https://api.example.com
+    #SERVER_URL = os.getenv('SERVER_URL', f'https://bodingly-superurgent-zayn.ngrok-free.dev:{PORT}')
 
     # 目录配置
     RAW_DATA_DIR = os.path.join(BASE_DIR, os.getenv('RAW_DATA_DIR', 'data/raw'))

@@ -1,5 +1,5 @@
 """
-满足度分析图生成 - 原始脚本封装版（按小时统计，支持返回Figure对象）
+满足度分析图生成 - 原始脚本封装版（按小时统计，支持返回Figure对象 + 修复中文乱码）
 基于原始脚本: 7manzudu_groupbyhour.py
 功能: 将原始脚本封装为可调用的函数，同时返回HTML和Figure对象
 """
@@ -27,7 +27,7 @@ def generate_satisfaction_chart(source_dir, output_dir):
 
 def generate_satisfaction_chart_with_figure(source_dir, output_dir):
     """
-    生成满足度分析图（按小时统计）- 返回HTML和Figure对象（新增）
+    生成满足度分析图（按小时统计）- 返回HTML和Figure对象（新增 + 修复中文乱码）
 
     参数:
     source_dir: 结果CSV文件所在目录
@@ -254,7 +254,8 @@ def generate_satisfaction_chart_with_figure(source_dir, output_dir):
         borderwidth=1
     )
 
-    # 设置图表布局
+    # ========== 功能四：修复中文乱码 ==========
+    # 设置图表布局（添加中文字体）
     fig1.update_layout(
         title={
             'text': f"测控任务满足度分析（按小时统计） (平均满足率: {avg_satisfaction:.2f}%)",
@@ -271,8 +272,13 @@ def generate_satisfaction_chart_with_figure(source_dir, output_dir):
         barmode='group',
         height=600,
         width=1000,
-        margin=dict(t=100, b=80)  # 增加顶部和底部边距
+        margin=dict(t=100, b=80),  # 增加顶部和底部边距
+        font=dict(
+            family="Microsoft YaHei, SimHei, WenQuanYi Zen Hei, Noto Sans CJK SC, PingFang SC, sans-serif",
+            size=12
+        )
     )
+    # ========== 修复结束 ==========
 
     # 设置第二个 Y 轴
     fig1.update_yaxes(title_text="满足率 (%)", secondary_y=True, range=[0, 100])

@@ -1,14 +1,13 @@
 {
-  "arc_data": "access_250804",
-  "antenna_num": {
-    "CM": 6,
-    "JMS": 14,
-    "KEL": 18,
-    "KS": 5,
-    "MH": 3,
-    "TC": 10,
-    "WC": 6,
-    "XA": 8
-  },
-  "time_window": 300
+  "arc_data": "access_251017",
+  "XA_antenna_num": 8,
+  "TC_antenna_num": 10,
+  "JMS_antenna_num": 14,
+  "KEL_antenna_num": 18,
+  "CM_antenna_num": 6,
+  "WC_antenna_num": 6,
+  "KS_antenna_num": 5,
+  "MH_antenna_num": 3,
+  "strategy": "优先级驱动式资源调度算法",
+  "time_window": "300"
 }

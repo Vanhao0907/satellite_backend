@@ -1,5 +1,5 @@
 """
-甘特图生成 - 原始脚本封装版（支持返回Figure对象）
+甘特图生成 - 原始脚本封装版（支持返回Figure对象 + 修复中文乱码）
 基于原始脚本: 6gantetu.py
 功能: 将原始脚本封装为可调用的函数，同时返回HTML和Figure对象
 """
@@ -27,7 +27,7 @@ def generate_gantt_chart(source_dir, output_dir):
 
 def generate_gantt_chart_with_figure(source_dir, output_dir):
     """
-    生成甘特图 - 返回HTML和Figure对象（新增）
+    生成甘特图 - 返回HTML和Figure对象（新增 + 修复中文乱码）
 
     参数:
     source_dir: 结果CSV文件所在目录
@@ -161,14 +161,20 @@ def generate_gantt_chart_with_figure(source_dir, output_dir):
     # 设置 y 轴排序
     fig.update_yaxes(categoryorder="array", categoryarray=y_order)
 
-    # 设置布局
+    # ========== 功能四：修复中文乱码 ==========
+    # 设置中文字体（支持多平台）
     fig.update_layout(
         xaxis_title="Time (UTC)",
         yaxis_title="Antenna",
         showlegend=True,  # 显示图例
         legend_title="Satellite Type",  # 图例标题
         height=1000,  # 调整图表高度
+        font=dict(
+            family="Microsoft YaHei, SimHei, WenQuanYi Zen Hei, Noto Sans CJK SC, PingFang SC, sans-serif",
+            size=12
+        )
     )
+    # ========== 修复结束 ==========
 
     # ========== 修改部分：生成HTML并返回Figure对象 ==========
     # 生成 HTML 内容

@@ -1,11 +1,12 @@
 """
-卫星资源调度服务 - 仅QV频段版本（支持图片导出）
-串联所有处理步骤：数据集构建 → 调度算法 → 结果合并 → 可视化（HTML + 图片）
+卫星资源调度服务 - 仅QV频段版本（支持图片导出 + 算法选择 + 数据集统计 + ZIP下载）
+串联所有处理步骤：数据集构建 → 统计信息 → 压缩ZIP → 调度算法 → 结果合并 → 可视化（HTML + 图片）
 """
 import os
 import shutil
 import time
 import logging
+import zipfile
 from datetime import datetime
 from flask import current_app
 
@@ -14,13 +15,14 @@ from core.scheduling_algorithm import SchedulingAlgorithm
 from core.result_combiner import ResultCombiner
 from core.gantt_chart_generator import GanttChartGenerator
 from core.satisfaction_chart_generator import SatisfactionChartGenerator
+from core.dataset_statistics import DatasetStatistics
 
 logger = logging.getLogger(__name__)
 
 
 class SchedulingService:
     """
-    卫星资源调度服务 - 仅QV频段（支持HTML + 图片导出）
+    卫星资源调度服务 - 仅QV频段（支持HTML + 图片导出 + 算法选择 + 统计 + ZIP下载）
     负责协调整个调度流程
     """
 
@@ -32,6 +34,7 @@ class SchedulingService:
             params: dict {
                 "arc_data": str,
                 "antenna_num": dict,
+                "strategy": str,
                 "time_window": int
             }
         """
@@ -69,23 +72,25 @@ class SchedulingService:
         logger.info(f"[{self.task_id}] 工作目录: {self.work_dir}")
         logger.info(f"[{self.task_id}] 站点数: {len(params['antenna_num'])}")
         logger.info(f"[{self.task_id}] 总天线数: {sum(params['antenna_num'].values())}")
+        logger.info(f"[{self.task_id}] 算法策略: {params['strategy']}")
         logger.info(f"[{self.task_id}] 时间窗口: {params['time_window']}秒")
 
     def execute(self):
         """
-        执行完整的调度流程（支持图片导出）
+        执行完整的调度流程（支持图片导出、算法选择、统计信息、ZIP下载）
 
         Returns:
             dict: {
                 "task_id": str,
                 "elapsed_time": float,
-                "statistics": dict,
+                "statistics": dict (包含站点统计和卫星类型统计),
                 "charts": {
                     "gantt_chart_html": str,
-                    "gantt_chart_image_url": str,  # ← 新增
+                    "gantt_chart_image_url": str,
                     "satisfaction_chart_html": str,
-                    "satisfaction_chart_image_url": str  # ← 新增
+                    "satisfaction_chart_image_url": str
                 },
+                "dataset_zip_url": str,
                 "validation": dict
             }
         """
@@ -97,8 +102,14 @@ class SchedulingService:
             # 步骤1: 构建数据集
             dataset_path = self._step1_build_dataset()
 
-            # 步骤1.5: 生成算法配置文件
-            self._step1_5_generate_algorithm_config(dataset_path)
+            # 步骤1.5: 统计数据集信息
+            dataset_stats = self._step1_5_calculate_statistics(dataset_path)
+
+            # 步骤1.6: 压缩数据集为ZIP
+            dataset_zip_url = self._step1_6_create_dataset_zip(dataset_path)
+
+            # 步骤1.7: 生成算法配置文件
+            self._step1_7_generate_algorithm_config(dataset_path)
 
             # 步骤2: 执行调度算法
             excel_path, statistics = self._step2_run_scheduling(dataset_path)
@@ -115,17 +126,21 @@ class SchedulingService:
             # 计算总耗时
             elapsed_time = time.time() - start_time
 
+            # 合并统计信息（算法统计 + 数据集统计）
+            combined_statistics = {**statistics, **dataset_stats}
+
             # 组装返回结果
             result = {
                 'task_id': self.task_id,
                 'elapsed_time': round(elapsed_time, 2),
-                'statistics': statistics,
+                'statistics': combined_statistics,
                 'charts': {
                     'gantt_chart_html': gantt_html,
-                    'gantt_chart_image_url': gantt_image_url,  # ← 新增
+                    'gantt_chart_image_url': gantt_image_url,
                     'satisfaction_chart_html': satisfaction_html,
-                    'satisfaction_chart_image_url': satisfaction_image_url  # ← 新增
+                    'satisfaction_chart_image_url': satisfaction_image_url
                 },
+                'dataset_zip_url': dataset_zip_url,
                 'validation': statistics.get('validation', {
                     'no_overflow': True,
                     'no_overlap': True,
@@ -138,8 +153,11 @@ class SchedulingService:
             logger.info(f"[{self.task_id}] 成功率: {statistics.get('success_rate_all', 0):.2%}")
             logger.info(f"[{self.task_id}] 甘特图URL: {gantt_image_url}")
             logger.info(f"[{self.task_id}] 满足度图URL: {satisfaction_image_url}")
+            logger.info(f"[{self.task_id}] 数据集ZIP URL: {dataset_zip_url}")
+            logger.info(f"[{self.task_id}] 站点数据量: {dataset_stats['station_data_counts']}")
+            logger.info(f"[{self.task_id}] 卫星类型统计: {dataset_stats['satellite_type_counts']}")
 
-            # 可选：自动清理临时文件（保留静态图片）
+            # 可选：自动清理临时文件（保留静态图片和ZIP）
             if current_app.config.get('AUTO_CLEANUP', False):
                 self._cleanup()
 
@@ -153,7 +171,7 @@ class SchedulingService:
 
     def _step1_build_dataset(self):
         """步骤1: 构建数据集"""
-        logger.info(f"[{self.task_id}] 【步骤1/5】构建数据集 (仅QV频段)...")
+        logger.info(f"[{self.task_id}] 【步骤1/7】构建数据集 (仅QV频段)...")
 
         builder = DatasetBuilder(
             raw_data_dir=self.raw_data_dir,
@@ -166,9 +184,74 @@ class SchedulingService:
         logger.info(f"[{self.task_id}] 数据集构建完成: {dataset_path}")
         return dataset_path
 
-    def _step1_5_generate_algorithm_config(self, dataset_path):
-        """步骤1.5: 生成算法配置文件"""
-        logger.info(f"[{self.task_id}] 【步骤1.5/5】生成算法配置文件...")
+    def _step1_5_calculate_statistics(self, dataset_path):
+        """步骤1.5: 统计数据集信息"""
+        logger.info(f"[{self.task_id}] 【步骤1.5/7】统计数据集信息...")
+
+        stats_calculator = DatasetStatistics(
+            dataset_dir=dataset_path,
+            antenna_config=self.params['antenna_num']
+        )
+
+        dataset_stats = stats_calculator.calculate()
+
+        logger.info(f"[{self.task_id}] 数据集统计完成:")
+        logger.info(f"[{self.task_id}]   站点数据量: {dataset_stats['station_data_counts']}")
+        logger.info(f"[{self.task_id}]   卫星类型统计: {dataset_stats['satellite_type_counts']}")
+        logger.info(f"[{self.task_id}]   总任务数（去重）: {dataset_stats['total_unique_tasks']}")
+
+        return dataset_stats
+
+    def _step1_6_create_dataset_zip(self, dataset_path):
+        """步骤1.6: 压缩数据集为ZIP文件"""
+        logger.info(f"[{self.task_id}] 【步骤1.6/7】压缩数据集为ZIP...")
+
+        try:
+            # 获取配置
+            static_dir = current_app.config['STATIC_FILES_DIR']
+            server_url = current_app.config['SERVER_URL']
+            static_prefix = current_app.config['STATIC_URL_PREFIX']
+
+            # 确保静态目录存在
+            os.makedirs(static_dir, exist_ok=True)
+
+            # 生成ZIP文件名
+            zip_filename = f"{self.task_id}_dataset.zip"
+            zip_filepath = os.path.join(static_dir, zip_filename)
+
+            logger.info(f"[{self.task_id}]   目标ZIP路径: {zip_filepath}")
+
+            # 创建ZIP文件
+            with zipfile.ZipFile(zip_filepath, 'w', zipfile.ZIP_DEFLATED) as zipf:
+                # 遍历dataset目录下的所有文件
+                for root, dirs, files in os.walk(dataset_path):
+                    for file in files:
+                        file_path = os.path.join(root, file)
+                        # 计算相对路径（保持目录结构）
+                        arcname = os.path.relpath(file_path, dataset_path)
+                        zipf.write(file_path, arcname)
+                        logger.debug(f"[{self.task_id}]     添加文件: {arcname}")
+
+            # 获取ZIP文件大小
+            zip_size = os.path.getsize(zip_filepath)
+            zip_size_mb = zip_size / (1024 * 1024)
+
+            # 构建下载URL
+            zip_url = f"{server_url}{static_prefix}/{zip_filename}"
+
+            logger.info(f"[{self.task_id}] ✓ ZIP文件创建成功")
+            logger.info(f"[{self.task_id}]   文件大小: {zip_size_mb:.2f} MB")
+            logger.info(f"[{self.task_id}]   下载URL: {zip_url}")
+
+            return zip_url
+
+        except Exception as e:
+            logger.error(f"[{self.task_id}] ZIP创建失败: {e}", exc_info=True)
+            return None
+
+    def _step1_7_generate_algorithm_config(self, dataset_path):
+        """步骤1.7: 生成算法配置文件（支持算法选择）"""
+        logger.info(f"[{self.task_id}] 【步骤1.7/7】生成算法配置文件...")
 
         try:
             project_root = os.getcwd()
@@ -188,14 +271,28 @@ class SchedulingService:
 
             root_folder = os.path.join(dataset_path, 'QV')
             time_window = self.params['time_window']
+            strategy = self.params['strategy']
+
+            # ========== 功能一：根据策略选择METHOD ==========
+            if strategy == "优先级驱动式资源调度算法":
+                method_value = 3
+                logger.info(f"[{self.task_id}]   算法策略: 优先级驱动式 (METHOD=3)")
+            elif strategy == "GRU模拟退火算法":
+                method_value = 2
+                logger.info(f"[{self.task_id}]   算法策略: GRU模拟退火 (METHOD=2)")
+            else:
+                # 默认值
+                method_value = 3
+                logger.warning(f"[{self.task_id}]   未知策略'{strategy}'，使用默认值 METHOD=3")
 
             config_content = f"""# 算法配置文件 - 自动生成
 # 任务ID: {self.task_id}
 # 生成时间: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
+# 算法策略: {strategy}
 
 ROOT_FOLDER = r'{root_folder}'
 OPTIMIZATION = 'TRUE'
-METHOD = 3
+METHOD = {method_value}
 ANSWER_TYPE = 'TRUE'
 TASK_INTERVAL = {time_window}
 USE_SA = 'FALSE'
@@ -230,7 +327,7 @@ LOAD_WEIGHT_TIME = 0.7
 
     def _step2_run_scheduling(self, dataset_path):
         """步骤2: 执行调度算法"""
-        logger.info(f"[{self.task_id}] 【步骤2/5】执行调度算法...")
+        logger.info(f"[{self.task_id}] 【步骤2/7】执行调度算法...")
 
         scheduler = SchedulingAlgorithm(
             dataset_dir=dataset_path,
@@ -250,7 +347,7 @@ LOAD_WEIGHT_TIME = 0.7
 
     def _step3_combine_results(self, dataset_path, excel_path):
         """步骤3: 合并结果"""
-        logger.info(f"[{self.task_id}] 【步骤3/5】合并结果数据...")
+        logger.info(f"[{self.task_id}] 【步骤3/7】合并结果数据...")
 
         combiner = ResultCombiner(
             dataset_dir=dataset_path,
@@ -270,7 +367,7 @@ LOAD_WEIGHT_TIME = 0.7
         Returns:
             tuple: (html_content, image_url)
         """
-        logger.info(f"[{self.task_id}] 【步骤4/5】生成甘特图（HTML + 图片）...")
+        logger.info(f"[{self.task_id}] 【步骤4/7】生成甘特图（HTML + 图片）...")
 
         generator = GanttChartGenerator(
             result_dir=result_dataset_path,
@@ -292,7 +389,7 @@ LOAD_WEIGHT_TIME = 0.7
         Returns:
             tuple: (html_content, image_url)
         """
-        logger.info(f"[{self.task_id}] 【步骤5/5】生成满足度分析图（HTML + 图片）...")
+        logger.info(f"[{self.task_id}] 【步骤5/7】生成满足度分析图（HTML + 图片）...")
 
         generator = SatisfactionChartGenerator(
             result_dir=result_dataset_path,
@@ -318,7 +415,7 @@ LOAD_WEIGHT_TIME = 0.7
             os.makedirs(directory, exist_ok=True)
 
     def _cleanup(self):
-        """清理临时文件（保留静态图片）"""
+        """清理临时文件（保留静态图片和ZIP）"""
         logger.info(f"[{self.task_id}] 清理临时工作目录...")
 
         try:
@@ -332,8 +429,8 @@ LOAD_WEIGHT_TIME = 0.7
                 os.remove(self.algorithm_config_path)
                 logger.info(f"[{self.task_id}] ✓ 算法配置文件已清理")
 
-            # 注意：静态图片文件保留在 STATIC_FILES_DIR 中
-            logger.info(f"[{self.task_id}] ℹ️  静态图片已保留在静态目录")
+            # 注意：静态图片和ZIP文件保留在 STATIC_FILES_DIR 中
+            logger.info(f"[{self.task_id}] ℹ️  静态文件（图片和ZIP）已保留在静态目录")
 
         except Exception as e:
             logger.warning(f"[{self.task_id}] ⚠ 清理失败: {str(e)}")
