@@ -13,6 +13,7 @@ import os
 import sys
 import configparser
 import logging
+import importlib
 from datetime import datetime
 
 logger = logging.getLogger(__name__)
@@ -106,13 +107,42 @@ class SchedulingAlgorithm:
                 logger.info(f"✓ 已将算法模块路径添加到 sys.path[0]: {scheduling_module_path}")
 
             # 导入算法模块
-            logger.info("正在导入底层算法模块...")
-            from main import main as run_scheduling
-            logger.info("✓ 底层算法模块导入成功")
+            try:
+                import config
+                import main as scheduling_main
+            except ImportError:
+                # 如果第一次导入失败，尝试直接 import（应对首次运行）
+                import config
+                import main as scheduling_main
+
+            # 2. 强制重载, 确保读取磁盘上最新的 config.py
+            importlib.reload(config)
+            importlib.reload(scheduling_main)
+
+            # 输出当前使用的算法配置
+            current_method = getattr(config, 'METHOD', '未知')
+            strategy_name = "未知策略"
+            
+            if current_method == 2:
+                strategy_name = "GRU模拟退火算法 (GRU-SA)"
+            elif current_method == 3:
+                strategy_name = "优先级驱动式资源调度算法 (Priority)"
+            
+            print("\n" + "="*50)
+            print(f"    正在启动算法引擎...")
+            print(f"    当前生效策略: {strategy_name}")
+            print(f"    配置参数值: METHOD = {current_method}")
+            print(f"    时间窗口: {getattr(config, 'TASK_INTERVAL', 'N/A')} 秒")
+            print("="*50 + "\n")
+            
+            # 同时记录到日志
+            logger.info(f"最终确认算法策略: {strategy_name} (METHOD={current_method})")
+            
+            logger.info(f"!!! 已强制重载算法配置: METHOD={config.METHOD} (策略切换生效检查)")
 
             # ========== 执行调度算法 ==========
             logger.info("调用底层调度算法...")
-            result = run_scheduling()
+            result = scheduling_main.main()
             logger.info("✓ 调度算法执行完成")
 
         except ImportError as e:

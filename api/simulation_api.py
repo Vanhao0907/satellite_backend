@@ -63,7 +63,7 @@ def run_simulation():
                 "satisfaction_chart_html": "<html>...</html>",
                 "satisfaction_chart_image_url": "http://..."
             },
-            "dataset_zip_url": "http://localhost:5000/static/task_xxx_dataset.zip",
+            "dataset_zip_url": "http://localhost:5000/data/static/task_xxx_dataset.zip",
             "validation": {...}
         }
     }

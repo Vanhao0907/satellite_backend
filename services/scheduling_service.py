@@ -7,6 +7,7 @@ import shutil
 import time
 import logging
 import zipfile
+import csv
 from datetime import datetime
 from flask import current_app
 
@@ -105,8 +106,9 @@ class SchedulingService:
             # 步骤1.5: 统计数据集信息
             dataset_stats = self._step1_5_calculate_statistics(dataset_path)
 
-            # 步骤1.6: 压缩数据集为ZIP
+            # 步骤1.6: 压缩数据集为ZIP并增加数据集预览
             dataset_zip_url = self._step1_6_create_dataset_zip(dataset_path)
+            csv_preview_md = self._generate_csv_preview(dataset_path)
 
             # 步骤1.7: 生成算法配置文件
             self._step1_7_generate_algorithm_config(dataset_path)
@@ -141,6 +143,7 @@ class SchedulingService:
                     'satisfaction_chart_image_url': satisfaction_image_url
                 },
                 'dataset_zip_url': dataset_zip_url,
+                'preview_markdown': csv_preview_md,
                 'validation': statistics.get('validation', {
                     'no_overflow': True,
                     'no_overlap': True,
@@ -154,6 +157,7 @@ class SchedulingService:
             logger.info(f"[{self.task_id}] 甘特图URL: {gantt_image_url}")
             logger.info(f"[{self.task_id}] 满足度图URL: {satisfaction_image_url}")
             logger.info(f"[{self.task_id}] 数据集ZIP URL: {dataset_zip_url}")
+            logger.info(f"[{self.task_id}] 数据集预览: {csv_preview_md[:100]}...")
             logger.info(f"[{self.task_id}] 站点数据量: {dataset_stats['station_data_counts']}")
             logger.info(f"[{self.task_id}] 卫星类型统计: {dataset_stats['satellite_type_counts']}")
 
@@ -207,19 +211,29 @@ class SchedulingService:
         logger.info(f"[{self.task_id}] 【步骤1.6/7】压缩数据集为ZIP...")
 
         try:
-            # 获取配置
-            static_dir = current_app.config['STATIC_FILES_DIR']
-            server_url = current_app.config['SERVER_URL']
-            static_prefix = current_app.config['STATIC_URL_PREFIX']
+            # 1. 直接获取 Flask 应用实例真正的静态文件目录
+            static_dir = current_app.static_folder
+            
+            # 防御性代码：如果 Flask 没配置 static_folder，默认使用项目根目录下的 static
+            if not static_dir:
+                static_dir = os.path.join(current_app.root_path, 'static')
 
-            # 确保静态目录存在
-            os.makedirs(static_dir, exist_ok=True)
+            # 2. 打印日志验证路径
+            logger.info(f"[{self.task_id}] >>> 调试: Flask静态目录绝对路径: {static_dir}")
+            
+            # 3. 确保目录存在
+            if not os.path.exists(static_dir):
+                os.makedirs(static_dir)
+
+            # 获取URL前缀配置 
+            server_url = current_app.config.get('SERVER_URL', 'http://172.16.1.84:5000')
+            static_prefix = current_app.config.get('STATIC_URL_PREFIX', '/static')
 
             # 生成ZIP文件名
             zip_filename = f"{self.task_id}_dataset.zip"
             zip_filepath = os.path.join(static_dir, zip_filename)
 
-            logger.info(f"[{self.task_id}]   目标ZIP路径: {zip_filepath}")
+            logger.info(f"[{self.task_id}]   目标ZIP保存路径: {zip_filepath}")
 
             # 创建ZIP文件
             with zipfile.ZipFile(zip_filepath, 'w', zipfile.ZIP_DEFLATED) as zipf:
@@ -230,17 +244,21 @@ class SchedulingService:
                         # 计算相对路径（保持目录结构）
                         arcname = os.path.relpath(file_path, dataset_path)
                         zipf.write(file_path, arcname)
-                        logger.debug(f"[{self.task_id}]     添加文件: {arcname}")
-
+                        
             # 获取ZIP文件大小
-            zip_size = os.path.getsize(zip_filepath)
-            zip_size_mb = zip_size / (1024 * 1024)
+            if os.path.exists(zip_filepath):
+                 zip_size = os.path.getsize(zip_filepath)
+                 zip_size_mb = zip_size / (1024 * 1024)
+                 logger.info(f"[{self.task_id}] ✓ ZIP文件已生成，大小: {zip_size_mb:.2f} MB")
+            else:
+                 logger.error(f"[{self.task_id}] × ZIP文件生成失败，文件未找到")
+                 return None
 
             # 构建下载URL
-            zip_url = f"{server_url}{static_prefix}/{zip_filename}"
+            base_url = server_url.rstrip('/')
+            prefix = static_prefix.strip('/')
+            zip_url = f"{base_url}/{prefix}/{zip_filename}"
 
-            logger.info(f"[{self.task_id}] ✓ ZIP文件创建成功")
-            logger.info(f"[{self.task_id}]   文件大小: {zip_size_mb:.2f} MB")
             logger.info(f"[{self.task_id}]   下载URL: {zip_url}")
 
             return zip_url
@@ -434,3 +452,83 @@ LOAD_WEIGHT_TIME = 0.7
 
         except Exception as e:
             logger.warning(f"[{self.task_id}] ⚠ 清理失败: {str(e)}")
+
+    def _generate_csv_preview(self, dataset_path):
+        """
+        辅助步骤: 遍历数据集目录(频段->站点->CSV)，生成预览表格
+        结构: dataset/QV/CM/CM01.csv
+        """
+        logger.info(f"[{self.task_id}] 生成CSV数据预览...")
+        preview_markdown = "###  数据集抽样预览\n\n"
+        
+        try:
+            # 1. 获取第一层文件夹 (频段层: QV, S)
+            band_dirs = [d for d in os.listdir(dataset_path) if os.path.isdir(os.path.join(dataset_path, d))]
+            
+            if not band_dirs:
+                return "###  数据集目录为空"
+
+            # 遍历每个频段文件夹 (QV, S)
+            for band_name in band_dirs:
+                band_path = os.path.join(dataset_path, band_name)
+                
+                # 2. 获取第二层文件夹 (站点层: CM, JMS, KEL...)
+                station_dirs = [d for d in os.listdir(band_path) if os.path.isdir(os.path.join(band_path, d))]
+                
+                if not station_dirs:
+                    continue
+
+                # 在Markdown里标明频段
+                preview_markdown += f"### 📡 频段: {band_name}\n"
+
+                # 遍历每个站点文件夹
+                for station_name in station_dirs:
+                    station_path = os.path.join(band_path, station_name)
+                    
+                    # 3. 寻找 .csv 文件
+                    csv_files = [f for f in os.listdir(station_path) if f.endswith('.csv')]
+                    
+                    if not csv_files:
+                        continue
+                    
+                    # 随机或固定选取第一个CSV文件
+                    target_csv_name = csv_files[0]
+                    target_csv_path = os.path.join(station_path, target_csv_name)
+                    
+                    # 生成标题: 站点名 / 文件名
+                    preview_markdown += f"** 站点: {station_name} / 📄 {target_csv_name}**\n"
+                    
+                    try:
+                        # 读取 CSV
+                        with open(target_csv_path, 'r', encoding='utf-8-sig') as f:
+                            reader = csv.reader(f)
+                            all_rows = list(reader)
+                            
+                            if not all_rows:
+                                preview_markdown += "> *[文件为空]*\n\n"
+                                continue
+                            
+                            # 获取表头
+                            header = all_rows[0]
+                            # 获取数据 (取第1到第3行数据，即 rows[1:4])
+                            data_rows = all_rows[1:4] if len(all_rows) > 1 else []
+                            
+                            # --- 生成表格 ---
+                            # 写入表头
+                            preview_markdown += "| " + " | ".join(header) + " |\n"
+                            # 写入分隔线
+                            preview_markdown += "| " + " | ".join(["---"] * len(header)) + " |\n"
+                            # 写入数据行
+                            for row in data_rows:
+                                preview_markdown += "| " + " | ".join(row) + " |\n"
+                            
+                            preview_markdown += "\n" # 表格后空一行
+                            
+                    except Exception as e:
+                        preview_markdown += f"> *读取出错: {str(e)}*\n\n"
+
+            return preview_markdown
+
+        except Exception as e:
+            logger.error(f"[{self.task_id}] 生成预览失败: {e}", exc_info=True)
+            return "###  数据预览生成失败"
